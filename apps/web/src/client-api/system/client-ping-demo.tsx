@@ -13,7 +13,7 @@ export function ClientPingDemo() {
   const env = useMemo(() => getWebClientEnv(), [])
   const queryClient = useQueryClient()
 
-  const healthQuery = useQuery({
+  const { data, isPending, isError, isSuccess, error, refetch } = useQuery({
     queryKey: HEALTH_QUERY_KEY,
     queryFn: getClientHealth,
   })
@@ -56,7 +56,7 @@ export function ClientPingDemo() {
           </div>
           <button
             type="button"
-            onClick={() => void healthQuery.refetch()}
+            onClick={() => void refetch()}
             className="inline-flex h-9 items-center rounded-[var(--radius-control)] border border-border px-4 text-sm font-medium text-foreground transition hover:bg-muted"
           >
             Refetch health
@@ -66,11 +66,11 @@ export function ClientPingDemo() {
         <pre className="rounded-[var(--radius-card)] border border-border bg-background p-4 text-sm leading-6 text-muted-foreground">
           {JSON.stringify(
             {
-              isPending: healthQuery.isPending,
-              isError: healthQuery.isError,
-              isSuccess: healthQuery.isSuccess,
-              data: healthQuery.data,
-              error: healthQuery.error,
+              isPending,
+              isError,
+              isSuccess,
+              data,
+              error,
             },
             null,
             2,
