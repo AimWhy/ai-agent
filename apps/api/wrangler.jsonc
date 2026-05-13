@@ -3,18 +3,48 @@
   "name": "api",
   "main": "src/index.ts",
   "compatibility_date": "2026-04-22",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ai-agent-local-auth",
+      "database_id": "91e63d07-bee3-4c00-9349-cfde384ba6eb",
+      "migrations_dir": "migrations"
+    }
+  ],
   "vars": {
-    "APP_ENV": "development"
+    "APP_ENV": "development",
+    "ACCESS_TOKEN_TTL_SEC": "900",
+    "REFRESH_TOKEN_TTL_SEC": "2592000"
   },
   "env": {
     "test": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "ai-agent-test-auth",
+          "database_id": "22222222-2222-4222-8222-222222222222",
+          "migrations_dir": "migrations"
+        }
+      ],
       "vars": {
-        "APP_ENV": "test"
+        "APP_ENV": "test",
+        "ACCESS_TOKEN_TTL_SEC": "900",
+        "REFRESH_TOKEN_TTL_SEC": "2592000"
       }
     },
     "production": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "ai-agent-production-auth",
+          "database_id": "33333333-3333-4333-8333-333333333333",
+          "migrations_dir": "migrations"
+        }
+      ],
       "vars": {
-        "APP_ENV": "production"
+        "APP_ENV": "production",
+        "ACCESS_TOKEN_TTL_SEC": "900",
+        "REFRESH_TOKEN_TTL_SEC": "2592000"
       }
     }
   }

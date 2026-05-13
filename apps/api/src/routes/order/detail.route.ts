@@ -7,12 +7,10 @@ import {
   buildFailure,
   buildSuccess,
 } from '@repo/contracts'
+import type { ApiBindings } from '../../bindings'
+import { createApiMeta } from '../../lib/api-meta'
 
-type Bindings = {
-  APP_ENV: 'development' | 'test' | 'production'
-}
-
-const orderRoute = new Hono<{ Bindings: Bindings }>()
+const orderRoute = new Hono<{ Bindings: ApiBindings }>()
 
 orderRoute.post(
   '/detail',
@@ -27,13 +25,7 @@ orderRoute.post(
       details: result.error.issues,
     }
 
-    return c.json(
-      buildFailure(res, {
-        requestId: crypto.randomUUID(),
-        timestamp: new Date().toISOString(),
-      }),
-      400,
-    )
+    return c.json(buildFailure(res, createApiMeta()), 400)
   }),
   (c) => {
     const payload = c.req.valid('json')
@@ -43,12 +35,7 @@ orderRoute.post(
       total: 199,
     })
 
-    return c.json(
-      buildSuccess(res, {
-        requestId: crypto.randomUUID(),
-        timestamp: new Date().toISOString(),
-      }),
-    )
+    return c.json(buildSuccess(res, createApiMeta()))
   },
 )
 

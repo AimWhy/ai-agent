@@ -1,14 +1,9 @@
 import { Hono } from 'hono'
-import {
-  UserProfileResponseSchema,
-  buildSuccess,
-} from '@repo/contracts'
+import { UserProfileResponseSchema, buildSuccess } from '@repo/contracts'
+import type { ApiBindings } from '../../bindings'
+import { createApiMeta } from '../../lib/api-meta'
 
-type Bindings = {
-  APP_ENV: 'development' | 'test' | 'production'
-}
-
-const userRoute = new Hono<{ Bindings: Bindings }>()
+const userRoute = new Hono<{ Bindings: ApiBindings }>()
 
 userRoute.get('/profile', (c) => {
   const res = UserProfileResponseSchema.parse({
@@ -17,12 +12,7 @@ userRoute.get('/profile', (c) => {
     role: 'designer',
   })
 
-  return c.json(
-    buildSuccess(res, {
-      requestId: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-    }),
-  )
+  return c.json(buildSuccess(res, createApiMeta()))
 })
 
 export default userRoute

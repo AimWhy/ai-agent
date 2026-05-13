@@ -1,36 +1,15 @@
-import { BizCode, buildFailure, type ApiMeta } from '@repo/contracts'
+import { BizCode, buildFailure } from '@repo/contracts'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
+import type { ApiBindings } from './bindings'
+import { AppError } from './lib/app-error'
+import { createApiMeta } from './lib/api-meta'
 import routes from './routes'
 
-type AppErrorStatus = 400 | 401 | 403 | 404 | 409 | 422 | 500 | 504
-
-type Bindings = {
-  APP_ENV: 'development' | 'test' | 'production'
-}
-
-class AppError extends Error {
-  constructor(
-    readonly code: BizCode,
-    message: string,
-    readonly status: AppErrorStatus,
-    readonly details?: unknown,
-  ) {
-    super(message)
-  }
-}
-
-const app = new Hono<{ Bindings: Bindings }>()
-
-function createMeta(): ApiMeta {
-  return {
-    requestId: crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
-  }
-}
+const app = new Hono<{ Bindings: ApiBindings }>()
 
 app.onError((error, c) => {
-  const meta = createMeta()
+  const meta = createApiMeta()
 
   if (error instanceof AppError) {
     const res = {
@@ -67,7 +46,7 @@ app.notFound((c) => {
     message: 'Not found',
   }
 
-  return c.json(buildFailure(res, createMeta()), 404)
+  return c.json(buildFailure(res, createApiMeta()), 404)
 })
 
 app.route('/', routes)

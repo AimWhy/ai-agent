@@ -1,1 +1,5 @@
 APP_ENV=development
+JWT_ACCESS_SECRET=dev-access-secret-please-change
+JWT_REFRESH_SECRET=dev-refresh-secret-please-change
+ACCESS_TOKEN_TTL_SEC=900
+REFRESH_TOKEN_TTL_SEC=2592000

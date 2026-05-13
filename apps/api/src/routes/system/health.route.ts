@@ -1,15 +1,10 @@
 import { Hono } from 'hono'
-import {
-  buildSuccess,
-  type HealthResponse,
-} from '@repo/contracts'
+import { buildSuccess, type HealthResponse } from '@repo/contracts'
+import type { ApiBindings } from '../../bindings'
 import { getApiEnv } from '../../env'
+import { createApiMeta } from '../../lib/api-meta'
 
-type Bindings = {
-  APP_ENV: 'development' | 'test' | 'production'
-}
-
-const healthRoute = new Hono<{ Bindings: Bindings }>()
+const healthRoute = new Hono<{ Bindings: ApiBindings }>()
 
 healthRoute.get('/', (c) => {
   const env = getApiEnv(c.env)
@@ -18,12 +13,7 @@ healthRoute.get('/', (c) => {
     env: env.APP_ENV,
   }
 
-  return c.json(
-    buildSuccess(res, {
-      requestId: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-    }),
-  )
+  return c.json(buildSuccess(res, createApiMeta()))
 })
 
 export default healthRoute

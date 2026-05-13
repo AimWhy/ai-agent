@@ -7,13 +7,11 @@ import {
   buildSuccess,
   type PingResponse,
 } from '@repo/contracts'
+import type { ApiBindings } from '../../bindings'
 import { getApiEnv } from '../../env'
+import { createApiMeta } from '../../lib/api-meta'
 
-type Bindings = {
-  APP_ENV: 'development' | 'test' | 'production'
-}
-
-const pingRoute = new Hono<{ Bindings: Bindings }>()
+const pingRoute = new Hono<{ Bindings: ApiBindings }>()
 
 pingRoute.post(
   '/',
@@ -28,13 +26,7 @@ pingRoute.post(
       details: result.error.issues,
     }
 
-    return c.json(
-      buildFailure(res, {
-        requestId: crypto.randomUUID(),
-        timestamp: new Date().toISOString(),
-      }),
-      400,
-    )
+    return c.json(buildFailure(res, createApiMeta()), 400)
   }),
   (c) => {
     const payload = c.req.valid('json')
@@ -45,12 +37,7 @@ pingRoute.post(
       env: env.APP_ENV,
     }
 
-    return c.json(
-      buildSuccess(res, {
-        requestId: crypto.randomUUID(),
-        timestamp: new Date().toISOString(),
-      }),
-    )
+    return c.json(buildSuccess(res, createApiMeta()))
   },
 )
 

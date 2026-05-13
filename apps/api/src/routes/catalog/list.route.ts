@@ -1,14 +1,9 @@
 import { Hono } from 'hono'
-import {
-  CatalogListResponseSchema,
-  buildSuccess,
-} from '@repo/contracts'
+import { CatalogListResponseSchema, buildSuccess } from '@repo/contracts'
+import type { ApiBindings } from '../../bindings'
+import { createApiMeta } from '../../lib/api-meta'
 
-type Bindings = {
-  APP_ENV: 'development' | 'test' | 'production'
-}
-
-const catalogRoute = new Hono<{ Bindings: Bindings }>()
+const catalogRoute = new Hono<{ Bindings: ApiBindings }>()
 
 catalogRoute.get('/list', (c) => {
   const res = CatalogListResponseSchema.parse({
@@ -19,12 +14,7 @@ catalogRoute.get('/list', (c) => {
     ],
   })
 
-  return c.json(
-    buildSuccess(res, {
-      requestId: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-    }),
-  )
+  return c.json(buildSuccess(res, createApiMeta()))
 })
 
 export default catalogRoute
