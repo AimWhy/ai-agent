@@ -1,11 +1,12 @@
 import type { AdminLogoutRequest } from '@repo/contracts'
 import type { Context } from 'hono'
-import type { ApiBindings } from '../../bindings'
-import { getApiEnv } from '../../env'
-import { refreshTokenInvalidError } from '../errors'
-import { verifyRefreshToken } from '../jwt'
-import { findRefreshTokenForSession, revokeSession } from '../repository'
-import { hashTokenJti } from '../token-hash'
+import type { ApiBindings } from '@/bindings'
+import { getDb } from '@/db/client'
+import { getApiEnv } from '@/env'
+import { refreshTokenInvalidError } from '@/auth/errors'
+import { verifyRefreshToken } from '@/auth/jwt'
+import { findRefreshTokenForSession, revokeSession } from '@/auth/repository'
+import { hashTokenJti } from '@/auth/token-hash'
 
 // logout service 最短，读法也最直接：
 // 1. 验 refresh token
@@ -16,6 +17,7 @@ export async function handleAdminLogout(params: {
   payload: AdminLogoutRequest
 }) {
   const { c, payload } = params
+  const db = getDb(c.env.DB)
   const env = getApiEnv(c.env)
 
   let claims
@@ -30,7 +32,7 @@ export async function handleAdminLogout(params: {
   }
 
   const currentToken = await findRefreshTokenForSession({
-    db: c.env.DB,
+    db: db,
     jtiHash: await hashTokenJti(claims.jti),
     sessionId: claims.sid,
   })
@@ -41,7 +43,7 @@ export async function handleAdminLogout(params: {
 
   // logout 的目标不是“删掉 JWT 字符串”，而是把这条 session 以及它下面所有 refresh token 一次性撤销。
   await revokeSession({
-    db: c.env.DB,
+    db: db,
     sessionId: currentToken.sessionId,
     revokedAtMs: Date.now(),
     reason: 'logout',

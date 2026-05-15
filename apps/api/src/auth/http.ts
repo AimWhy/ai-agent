@@ -1,5 +1,5 @@
 import { BizCode, buildFailure } from '@repo/contracts'
-import { createApiMeta } from '../lib/api-meta'
+import { createApiMeta } from '@/lib/api-meta'
 
 // 这个 helper 只解决一件事：
 // 多个接口的 zValidator 失败响应长得完全一样，只是 message 不同。

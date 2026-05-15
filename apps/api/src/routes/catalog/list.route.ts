@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { CatalogListResponseSchema, buildSuccess } from '@repo/contracts'
-import type { ApiBindings } from '../../bindings'
-import { createApiMeta } from '../../lib/api-meta'
+import type { ApiBindings } from '@/bindings'
+import { createApiMeta } from '@/lib/api-meta'
 
 const catalogRoute = new Hono<{ Bindings: ApiBindings }>()
 

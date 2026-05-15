@@ -7,8 +7,8 @@ import {
   buildFailure,
   buildSuccess,
 } from '@repo/contracts'
-import type { ApiBindings } from '../../bindings'
-import { createApiMeta } from '../../lib/api-meta'
+import type { ApiBindings } from '@/bindings'
+import { createApiMeta } from '@/lib/api-meta'
 
 const orderRoute = new Hono<{ Bindings: ApiBindings }>()
 

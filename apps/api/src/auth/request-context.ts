@@ -1,5 +1,5 @@
 import type { Context } from 'hono'
-import type { ApiBindings } from '../bindings'
+import type { ApiBindings } from '@/bindings'
 
 // 这几个函数看起来小，但它们把“从请求里取上下文”这件事单独收口了。
 // service 只需要表达业务步骤，不需要反复写 trim / toLowerCase / header 名称。

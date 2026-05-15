@@ -6,12 +6,12 @@ import {
   AdminTokenRefreshRequestSchema,
   buildSuccess,
 } from '@repo/contracts'
-import type { ApiBindings } from '../../bindings'
-import { buildValidationErrorHandler } from '../../auth/http'
-import { handleAdminLogout } from '../../auth/services/admin-logout'
-import { handleAdminPasswordLogin } from '../../auth/services/admin-password-login'
-import { handleAdminTokenRefresh } from '../../auth/services/admin-token-refresh'
-import { createApiMeta } from '../../lib/api-meta'
+import type { ApiBindings } from '@/bindings'
+import { buildValidationErrorHandler } from '@/auth/http'
+import { handleAdminLogout } from '@/auth/services/admin-logout'
+import { handleAdminPasswordLogin } from '@/auth/services/admin-password-login'
+import { handleAdminTokenRefresh } from '@/auth/services/admin-token-refresh'
+import { createApiMeta } from '@/lib/api-meta'
 
 const adminAuthRoute = new Hono<{ Bindings: ApiBindings }>()
 

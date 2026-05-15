@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
 import { buildSuccess, type HealthResponse } from '@repo/contracts'
-import type { ApiBindings } from '../../bindings'
-import { getApiEnv } from '../../env'
-import { createApiMeta } from '../../lib/api-meta'
+import type { ApiBindings } from '@/bindings'
+import { getApiEnv } from '@/env'
+import { createApiMeta } from '@/lib/api-meta'
 
 const healthRoute = new Hono<{ Bindings: ApiBindings }>()
 

@@ -1,14 +1,15 @@
 import { AdminTokenRefreshResponseSchema, type AdminTokenRefreshRequest } from '@repo/contracts'
 import type { Context } from 'hono'
-import type { ApiBindings } from '../../bindings'
-import { getApiEnv } from '../../env'
+import type { ApiBindings } from '@/bindings'
+import { getDb } from '@/db/client'
+import { getApiEnv } from '@/env'
 import {
   adminRoleRequiredError,
   refreshTokenInvalidError,
   refreshTokenReplayedError,
   sessionRevokedError,
-} from '../errors'
-import { issueAdminTokenPair, verifyRefreshToken } from '../jwt'
+} from '@/auth/errors'
+import { issueAdminTokenPair, verifyRefreshToken } from '@/auth/jwt'
 import {
   findRefreshTokenForSession,
   getAdminRolesForUser,
@@ -16,8 +17,8 @@ import {
   markRefreshTokenUsed,
   revokeSession,
   updateRefreshRotation,
-} from '../repository'
-import { hashTokenJti } from '../token-hash'
+} from '@/auth/repository'
+import { hashTokenJti } from '@/auth/token-hash'
 
 // 读 refresh 流程时，重点看两段：
 // 1. 旧 refresh token 的合法性检查
@@ -28,6 +29,7 @@ export async function handleAdminTokenRefresh(params: {
   payload: AdminTokenRefreshRequest
 }) {
   const { c, payload } = params
+  const db = getDb(c.env.DB)
   const env = getApiEnv(c.env)
 
   let claims
@@ -44,7 +46,7 @@ export async function handleAdminTokenRefresh(params: {
   const nowMs = Date.now()
   const jtiHash = await hashTokenJti(claims.jti)
   const currentToken = await findRefreshTokenForSession({
-    db: c.env.DB,
+    db: db,
     jtiHash,
     sessionId: claims.sid,
   })
@@ -63,7 +65,7 @@ export async function handleAdminTokenRefresh(params: {
 
   if (currentToken.usedAtMs !== null) {
     await revokeSession({
-      db: c.env.DB,
+      db: db,
       sessionId: currentToken.sessionId,
       revokedAtMs: nowMs,
       reason: 'refresh_token_replay',
@@ -73,7 +75,7 @@ export async function handleAdminTokenRefresh(params: {
   }
 
   const markedUsed = await markRefreshTokenUsed({
-    db: c.env.DB,
+    db: db,
     tokenId: currentToken.tokenId,
     usedAtMs: nowMs,
   })
@@ -81,7 +83,7 @@ export async function handleAdminTokenRefresh(params: {
   // rotation 先抢占旧 token 的 used 标记，再创建新 token，能把并发刷新压成只有一个成功分支。
   if (!markedUsed) {
     await revokeSession({
-      db: c.env.DB,
+      db: db,
       sessionId: currentToken.sessionId,
       revokedAtMs: nowMs,
       reason: 'refresh_token_replay',
@@ -90,12 +92,12 @@ export async function handleAdminTokenRefresh(params: {
     throw refreshTokenReplayedError()
   }
 
-  const roles = await getAdminRolesForUser(c.env.DB, claims.sub)
+  const roles = await getAdminRolesForUser(db, claims.sub)
 
   // refresh 时重新查角色，是为了让后台权限变更能在下一次续签时立刻生效。
   if (roles.length === 0) {
     await revokeSession({
-      db: c.env.DB,
+      db: db,
       sessionId: currentToken.sessionId,
       revokedAtMs: nowMs,
       reason: 'admin_role_missing',
@@ -122,7 +124,7 @@ export async function handleAdminTokenRefresh(params: {
   })
 
   await insertRefreshToken({
-    db: c.env.DB,
+    db: db,
     tokenId: tokenPair.refreshJti,
     sessionId: currentToken.sessionId,
     jtiHash: await hashTokenJti(tokenPair.refreshJti),
@@ -132,7 +134,7 @@ export async function handleAdminTokenRefresh(params: {
   })
 
   await updateRefreshRotation({
-    db: c.env.DB,
+    db: db,
     oldTokenId: currentToken.tokenId,
     newTokenId: tokenPair.refreshJti,
     sessionId: currentToken.sessionId,

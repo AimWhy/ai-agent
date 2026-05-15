@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import type { ApiBindings } from '../bindings'
+import type { ApiBindings } from '@/bindings'
 import adminAuthRoute from './auth/admin.route'
 import catalogRoute from './catalog/list.route'
 import orderRoute from './order/detail.route'

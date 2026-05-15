@@ -7,9 +7,9 @@ import {
   buildSuccess,
   type PingResponse,
 } from '@repo/contracts'
-import type { ApiBindings } from '../../bindings'
-import { getApiEnv } from '../../env'
-import { createApiMeta } from '../../lib/api-meta'
+import type { ApiBindings } from '@/bindings'
+import { getApiEnv } from '@/env'
+import { createApiMeta } from '@/lib/api-meta'
 
 const pingRoute = new Hono<{ Bindings: ApiBindings }>()
 

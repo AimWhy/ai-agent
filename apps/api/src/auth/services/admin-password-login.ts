@@ -1,14 +1,15 @@
 import { AdminPasswordLoginResponseSchema } from '@repo/contracts'
-import type { ApiBindings } from '../../bindings'
-import { getApiEnv } from '../../env'
+import type { ApiBindings } from '@/bindings'
+import { getDb } from '@/db/client'
+import { getApiEnv } from '@/env'
 import {
   adminRoleRequiredError,
   authMethodDisabledError,
   invalidCredentialsError,
-} from '../errors'
-import { issueAdminTokenPair } from '../jwt'
-import { verifyPasswordHash } from '../password'
-import { getIp, getUserAgent, normalizeEmail } from '../request-context'
+} from '@/auth/errors'
+import { issueAdminTokenPair } from '@/auth/jwt'
+import { verifyPasswordHash } from '@/auth/password'
+import { getIp, getUserAgent, normalizeEmail } from '@/auth/request-context'
 import {
   createAdminSession,
   findLoginUserByNormalizedEmail,
@@ -16,8 +17,8 @@ import {
   getAdminRolesForUser,
   insertRefreshToken,
   isPasswordLoginEnabledForAdmin,
-} from '../repository'
-import { hashTokenJti } from '../token-hash'
+} from '@/auth/repository'
+import { hashTokenJti } from '@/auth/token-hash'
 import type { Context } from 'hono'
 import type { AdminPasswordLoginRequest } from '@repo/contracts'
 
@@ -30,15 +31,16 @@ export async function handleAdminPasswordLogin(params: {
   payload: AdminPasswordLoginRequest
 }) {
   const { c, payload } = params
+  const db = getDb(c.env.DB)
   const env = getApiEnv(c.env)
 
   // 第一步先看 admin 当前策略是否允许 password 登录，不让被禁用的登录方式继续往下碰用户数据。
-  if (!(await isPasswordLoginEnabledForAdmin(c.env.DB))) {
+  if (!(await isPasswordLoginEnabledForAdmin(db))) {
     throw authMethodDisabledError()
   }
 
   const normalizedEmail = normalizeEmail(payload.email)
-  const loginUser = await findLoginUserByNormalizedEmail(c.env.DB, normalizedEmail)
+  const loginUser = await findLoginUserByNormalizedEmail(db, normalizedEmail)
 
   if (!loginUser) {
     throw invalidCredentialsError()
@@ -55,18 +57,18 @@ export async function handleAdminPasswordLogin(params: {
     throw invalidCredentialsError()
   }
 
-  const roles = await getAdminRolesForUser(c.env.DB, loginUser.userId)
+  const roles = await getAdminRolesForUser(db, loginUser.userId)
 
   // 后台登录除了证明“你是谁”，还必须证明“你能不能进入 admin”。
   if (roles.length === 0) {
     throw adminRoleRequiredError()
   }
 
-  const applicationId = await getAdminApplicationId(c.env.DB)
+  const applicationId = await getAdminApplicationId(db)
   const nowMs = Date.now()
   const refreshExpiresAtMs = nowMs + env.REFRESH_TOKEN_TTL_SEC * 1000
   const session = await createAdminSession({
-    db: c.env.DB,
+    db: db,
     userId: loginUser.userId,
     applicationId,
     userAgent: getUserAgent(c),
@@ -85,7 +87,7 @@ export async function handleAdminPasswordLogin(params: {
   })
 
   await insertRefreshToken({
-    db: c.env.DB,
+    db: db,
     tokenId: tokenPair.refreshJti,
     sessionId: session.sessionId,
     jtiHash: await hashTokenJti(tokenPair.refreshJti),
