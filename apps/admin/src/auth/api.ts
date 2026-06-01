@@ -4,65 +4,27 @@ import type {
   AdminPasswordLoginResponse,
   AdminTokenRefreshRequest,
   AdminTokenRefreshResponse,
-  ApiResponse,
+  UserProfileResponse,
 } from '@repo/contracts'
-import { getAdminServerEnv } from '../env.server'
-
-async function parseApiResponse<T>(response: Response): Promise<T> {
-  const payload = (await response.json()) as ApiResponse<T>
-
-  if (!payload.ok) {
-    throw new Error(payload.error.message)
-  }
-
-  return payload.data
-}
+import { http } from '@/lib/http'
 
 // 这些函数只在 admin 的服务端层调用，让浏览器不必直接碰 API 的原始 token 响应。
-export async function loginWithAdminPassword(
-  input: AdminPasswordLoginRequest,
-): Promise<AdminPasswordLoginResponse> {
-  const env = getAdminServerEnv()
-  const response = await fetch(`${env.API_BASE_URL}/auth/admin/password/login`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(input),
-    cache: 'no-store',
-  })
-
-  return parseApiResponse<AdminPasswordLoginResponse>(response)
+export function loginWithAdminPassword(input: AdminPasswordLoginRequest) {
+  return http.post<AdminPasswordLoginResponse, AdminPasswordLoginRequest>('/auth/admin/password/login', input)
 }
 
-export async function refreshAdminSession(
-  input: AdminTokenRefreshRequest,
-): Promise<AdminTokenRefreshResponse> {
-  const env = getAdminServerEnv()
-  const response = await fetch(`${env.API_BASE_URL}/auth/admin/token/refresh`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(input),
-    cache: 'no-store',
-  })
-
-  return parseApiResponse<AdminTokenRefreshResponse>(response)
+export function refreshAdminSession(input: AdminTokenRefreshRequest) {
+  return http.post<AdminTokenRefreshResponse, AdminTokenRefreshRequest>('/auth/admin/token/refresh', input)
 }
 
-export async function logoutAdminSession(
-  input: AdminLogoutRequest,
-): Promise<void> {
-  const env = getAdminServerEnv()
-  const response = await fetch(`${env.API_BASE_URL}/auth/admin/logout`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(input),
-    cache: 'no-store',
-  })
+export function logoutAdminSession(input: AdminLogoutRequest) {
+  return http.post<{ success: true }, AdminLogoutRequest>('/auth/admin/logout', input)
+}
 
-  await parseApiResponse<{ success: true }>(response)
+export function getAdminUserProfile(accessToken?: string) {
+  return http.get<UserProfileResponse>('/rpc/user/profile', accessToken ? {
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+    },
+  } : undefined)
 }

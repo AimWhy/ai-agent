@@ -46,3 +46,25 @@ export type RefreshTokenClaims = {
   app: AdminAppName
   jti: string
 }
+
+export type UserProfileRecord = {
+  id: string
+  name: string
+  email: string
+  roles: string[]
+  status: 'active' | 'suspended' | 'deleted'
+  createdAtMs: number
+  updatedAtMs: number
+  lastLoginAtMs: number | null
+}
+
+export type UserListItemRecord = {
+  id: string
+  name: string
+  email: string
+  roles: string[]
+  status: 'active' | 'suspended' | 'deleted'
+  createdAtMs: number
+  updatedAtMs: number
+  lastLoginAtMs: number | null
+}

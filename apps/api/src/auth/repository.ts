@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { uuidv7 } from 'uuidv7'
 import type { ApiDb } from '@/db/client'
 import {
@@ -16,6 +16,8 @@ import type {
   LoginUserRecord,
   RefreshTokenRecord,
   SessionContext,
+  UserListItemRecord,
+  UserProfileRecord,
 } from './types'
 
 export async function isPasswordLoginEnabledForAdmin(db: ApiDb): Promise<boolean> {
@@ -277,4 +279,113 @@ export async function revokeSession(params: {
         ),
       ),
   ])
+}
+
+export async function findUserProfileById(
+  db: ApiDb,
+  userId: string,
+): Promise<UserProfileRecord | null> {
+  const profile = await db
+    .select({
+      id: users.id,
+      name: sql<string>`COALESCE(${users.displayName}, ${userEmails.email})`,
+      email: userEmails.email,
+      status: users.status,
+      createdAtMs: users.createdAtMs,
+      updatedAtMs: users.updatedAtMs,
+      lastLoginAtMs: users.lastLoginAtMs,
+    })
+    .from(users)
+    .innerJoin(userEmails, eq(userEmails.id, users.primaryEmailId))
+    .where(eq(users.id, userId))
+    .limit(1)
+    .get()
+
+  if (!profile) {
+    return null
+  }
+
+  const rolesResult = await db
+    .select({ code: roles.code })
+    .from(userRoleBindings)
+    .innerJoin(roles, eq(roles.id, userRoleBindings.roleId))
+    .where(
+      and(
+        eq(userRoleBindings.userId, userId),
+        eq(userRoleBindings.status, 'active'),
+      ),
+    )
+
+  return {
+    ...profile,
+    status: profile.status as UserProfileRecord['status'],
+    roles: rolesResult.map((row) => row.code),
+  }
+}
+
+export async function findUserList(
+  db: ApiDb,
+  params: {
+    offset: number
+    limit: number
+  },
+): Promise<{ items: UserListItemRecord[]; total: number }> {
+  const totalRow = await db
+    .select({ total: sql<number>`count(*)` })
+    .from(users)
+    .get()
+
+  const total = Number(totalRow?.total ?? 0)
+
+  const userList = await db
+    .select({
+      id: users.id,
+      name: sql<string>`COALESCE(${users.displayName}, ${userEmails.email})`,
+      email: userEmails.email,
+      status: users.status,
+      createdAtMs: users.createdAtMs,
+      updatedAtMs: users.updatedAtMs,
+      lastLoginAtMs: users.lastLoginAtMs,
+    })
+    .from(users)
+    .innerJoin(userEmails, eq(userEmails.id, users.primaryEmailId))
+    .orderBy(sql`${users.createdAtMs} desc, ${users.id} desc`)
+    .limit(params.limit)
+    .offset(params.offset)
+
+  if (userList.length === 0) {
+    return { items: [], total }
+  }
+
+  const userIds = userList.map((user) => user.id)
+  const roleRows = await db
+    .select({
+      userId: userRoleBindings.userId,
+      code: roles.code,
+    })
+    .from(userRoleBindings)
+    .innerJoin(roles, eq(roles.id, userRoleBindings.roleId))
+    .where(
+      and(
+        inArray(userRoleBindings.userId, userIds),
+        eq(userRoleBindings.status, 'active'),
+      ),
+    )
+
+  const rolesByUserId = new Map<string, string[]>()
+
+  for (const row of roleRows) {
+    const currentRoles = rolesByUserId.get(row.userId) ?? []
+    currentRoles.push(row.code)
+    rolesByUserId.set(row.userId, currentRoles)
+  }
+
+  return {
+    total,
+    items: userList.map((user) => ({
+      ...user,
+      status: user.status as UserListItemRecord['status'],
+      roles: rolesByUserId.get(user.id) ?? [],
+    })),
+  }
 }

@@ -13,6 +13,7 @@
   ],
   "vars": {
     "APP_ENV": "development",
+    "ADMIN_ORIGIN": "http://localhost:3006",
     "ACCESS_TOKEN_TTL_SEC": "900",
     "REFRESH_TOKEN_TTL_SEC": "2592000"
   },
@@ -28,6 +29,7 @@
       ],
       "vars": {
         "APP_ENV": "test",
+        "ADMIN_ORIGIN": "http://localhost:3006",
         "ACCESS_TOKEN_TTL_SEC": "900",
         "REFRESH_TOKEN_TTL_SEC": "2592000"
       }
@@ -43,6 +45,7 @@
       ],
       "vars": {
         "APP_ENV": "production",
+        "ADMIN_ORIGIN": "http://localhost:3006",
         "ACCESS_TOKEN_TTL_SEC": "900",
         "REFRESH_TOKEN_TTL_SEC": "2592000"
       }

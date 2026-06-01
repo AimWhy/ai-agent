@@ -58,6 +58,38 @@ export async function signRefreshToken(params: {
   return { token, jti }
 }
 
+export async function verifyAccessToken(params: {
+  token: string
+  secret: string
+}): Promise<AccessTokenClaims> {
+  const { payload } = await jwtVerify(params.token, toSecret(params.secret), {
+    algorithms: ['HS256'],
+  })
+
+  const sid = payload.sid
+  const app = payload.app
+  const roles = payload.roles
+  const sub = payload.sub
+
+  if (
+    typeof sid !== 'string' ||
+    typeof app !== 'string' ||
+    typeof sub !== 'string' ||
+    app !== 'admin' ||
+    !Array.isArray(roles) ||
+    roles.some((role) => typeof role !== 'string')
+  ) {
+    throw new Error('Invalid access token claims')
+  }
+
+  return {
+    sid,
+    app: 'admin',
+    roles,
+    sub,
+  }
+}
+
 export async function verifyRefreshToken(params: {
   token: string
   secret: string

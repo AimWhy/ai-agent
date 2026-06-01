@@ -1,12 +1,25 @@
 import { BizCode, buildFailure } from '@repo/contracts'
+import { cors } from 'hono/cors'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type { ApiBindings } from './bindings'
+import { getApiEnv } from './env'
 import { AppError } from './lib/app-error'
 import { createApiMeta } from './lib/api-meta'
 import routes from './routes'
 
 const app = new Hono<{ Bindings: ApiBindings }>()
+
+app.use('*', async (c, next) => {
+  const env = getApiEnv(c.env)
+  const corsMiddleware = cors({
+    origin: env.ADMIN_ORIGIN,
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+  })
+
+  return corsMiddleware(c, next)
+})
 
 app.onError((error, c) => {
   const meta = createApiMeta()

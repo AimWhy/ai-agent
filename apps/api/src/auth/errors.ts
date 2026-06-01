@@ -2,6 +2,14 @@ import { BizCode } from '@repo/contracts'
 import { AppError } from '@/lib/app-error'
 
 // 这组 helper 把“认证失败原因 -> HTTP 状态码 / 业务码”的映射收在一个地方，route 里只保留流程判断。
+export function authUnauthorizedError(message = 'Unauthorized'): AppError {
+  return new AppError(
+    BizCode.AUTH_UNAUTHORIZED,
+    message,
+    401,
+  )
+}
+
 export function authMethodDisabledError(): AppError {
   return new AppError(
     BizCode.AUTH_FORBIDDEN,
