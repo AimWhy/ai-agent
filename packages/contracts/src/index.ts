@@ -68,6 +68,30 @@ export type {
   UserProfileResponse,
 } from './user/profile.contract'
 export {
+  AvatarUploadResponseSchema,
+  LatestDefaultAvatarResponseSchema,
+} from './user/avatar.contract'
+export type {
+  AvatarUploadResponse,
+  LatestDefaultAvatarResponse,
+} from './user/avatar.contract'
+export {
+  DefaultAvatarHistoryItemSchema,
+  DefaultAvatarHistoryResponseSchema,
+} from './user/default-avatar-history.contract'
+export type {
+  DefaultAvatarHistoryItem,
+  DefaultAvatarHistoryResponse,
+} from './user/default-avatar-history.contract'
+export {
+  SetCurrentDefaultAvatarRequestSchema,
+  SetCurrentDefaultAvatarResponseSchema,
+} from './user/default-avatar-set-current.contract'
+export type {
+  SetCurrentDefaultAvatarRequest,
+  SetCurrentDefaultAvatarResponse,
+} from './user/default-avatar-set-current.contract'
+export {
   UserListItemSchema,
   UserListQuerySchema,
   UserListResponseSchema,
@@ -77,6 +101,14 @@ export type {
   UserListQuery,
   UserListResponse,
 } from './user/list.contract'
+export {
+  CreateUserRequestSchema,
+  CreateUserResponseSchema,
+} from './user/create.contract'
+export type {
+  CreateUserRequest,
+  CreateUserResponse,
+} from './user/create.contract'
 export {
   OrderDetailRequestSchema,
   OrderDetailResponseSchema,

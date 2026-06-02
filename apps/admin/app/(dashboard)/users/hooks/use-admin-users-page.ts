@@ -25,6 +25,15 @@ export function useAdminUsersPage() {
     totalPages,
     canPrev: page > 1,
     canNext: totalPages > 0 && page < totalPages,
+    setPage: (nextPage: number) => {
+      setPage(() => {
+        if (totalPages > 0) {
+          return Math.min(Math.max(1, nextPage), totalPages)
+        }
+
+        return Math.max(1, nextPage)
+      })
+    },
     prevPage: () => {
       setPage((current) => Math.max(1, current - 1))
     },

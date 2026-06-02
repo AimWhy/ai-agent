@@ -11,6 +11,12 @@
       "migrations_dir": "migrations"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "AVATAR_BUCKET",
+      "bucket_name": "ai-agent-local-avatars"
+    }
+  ],
   "vars": {
     "APP_ENV": "development",
     "ADMIN_ORIGIN": "http://localhost:3006",
@@ -27,6 +33,12 @@
           "migrations_dir": "migrations"
         }
       ],
+      "r2_buckets": [
+        {
+          "binding": "AVATAR_BUCKET",
+          "bucket_name": "ai-agent-test-avatars"
+        }
+      ],
       "vars": {
         "APP_ENV": "test",
         "ADMIN_ORIGIN": "http://localhost:3006",
@@ -41,6 +53,12 @@
           "database_name": "ai-agent-production-auth",
           "database_id": "33333333-3333-4333-8333-333333333333",
           "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "AVATAR_BUCKET",
+          "bucket_name": "ai-agent-production-avatars"
         }
       ],
       "vars": {

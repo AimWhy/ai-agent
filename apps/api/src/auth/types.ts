@@ -51,6 +51,7 @@ export type UserProfileRecord = {
   id: string
   name: string
   email: string
+  avatarKey: string | null
   roles: string[]
   status: 'active' | 'suspended' | 'deleted'
   createdAtMs: number
@@ -62,6 +63,7 @@ export type UserListItemRecord = {
   id: string
   name: string
   email: string
+  avatarKey: string | null
   roles: string[]
   status: 'active' | 'suspended' | 'deleted'
   createdAtMs: number

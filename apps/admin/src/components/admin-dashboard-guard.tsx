@@ -9,6 +9,7 @@ import { getAdminUserProfile } from '@/auth/api'
 type AdminDashboardContextValue = {
   profile: UserProfileResponse
   session: AdminAuthSession
+  refreshProfile: () => Promise<void>
 }
 
 const AdminDashboardContext = createContext<AdminDashboardContextValue | null>(null)
@@ -28,10 +29,9 @@ export function AdminDashboardGuard({ children }: AdminDashboardGuardProps) {
   const [context, setContext] = useState<AdminDashboardContextValue | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  useEffect(() => {
-    // 这里统一做 dashboard 首屏会话校验与 profile 拉取。
-    // 这样各个页面就不需要再分别写“未登录跳转 / 自己请求 profile”的重复逻辑。
-    async function loadProfile() {
+  async function loadProfile() {
+      // 这里统一做 dashboard 首屏会话校验与 profile 拉取。
+      // 这样各个页面就不需要再分别写“未登录跳转 / 自己请求 profile”的重复逻辑。
       const storedSession = readClientSession()
 
       // 本地没有任何会话快照，说明用户尚未登录或已被主动清理。
@@ -58,7 +58,7 @@ export function AdminDashboardGuard({ children }: AdminDashboardGuardProps) {
           return
         }
 
-        setContext({ profile: nextProfile, session: latestSession.session })
+        setContext({ profile: nextProfile, session: latestSession.session, refreshProfile: loadProfile })
       } catch {
         // 这里把 profile 拉取失败统一视为“当前会话已不可用”：
         // 可能是 refresh token 过期、会话被撤销，或者 API 鉴权失败。
@@ -70,6 +70,7 @@ export function AdminDashboardGuard({ children }: AdminDashboardGuardProps) {
       }
     }
 
+  useEffect(() => {
     // 登录、刷新、登出都会触发 client-session 里的全局事件。
     // 这里监听这类变化，让 dashboard 能在不整页刷新的情况下同步最新会话状态。
     function handleSessionChanged() {

@@ -13,11 +13,13 @@
     "./field": "./src/components/ui/field.tsx",
     "./input": "./src/components/ui/input.tsx",
     "./label": "./src/components/ui/label.tsx",
+    "./pagination": "./src/components/ui/pagination.tsx",
     "./progress": "./src/components/ui/progress.tsx",
     "./separator": "./src/components/ui/separator.tsx",
     "./sheet": "./src/components/ui/sheet.tsx",
     "./sidebar": "./src/components/ui/sidebar.tsx",
     "./skeleton": "./src/components/ui/skeleton.tsx",
+    "./spinner": "./src/components/ui/spinner.tsx",
     "./table": "./src/components/ui/table.tsx",
     "./tooltip": "./src/components/ui/tooltip.tsx"
   },

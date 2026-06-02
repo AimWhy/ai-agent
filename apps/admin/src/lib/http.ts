@@ -28,8 +28,9 @@ function shouldAttachAccessToken(headers: AxiosRequestConfig['headers']) {
 }
 
 function createRequestConfig(url: string, config: AxiosRequestConfig = {}): AxiosRequestConfig {
+  const isFormData = typeof FormData !== 'undefined' && config.data instanceof FormData
   const headers: RawAxiosRequestHeaders = {
-    'content-type': 'application/json',
+    ...(isFormData ? {} : { 'content-type': 'application/json' }),
     ...(config.headers as RawAxiosRequestHeaders | undefined),
   }
 
@@ -150,6 +151,16 @@ export const http = {
       ...config,
       method: 'GET',
     }))
+  },
+  async getRaw(url: string, config?: AxiosRequestConfig): Promise<Blob> {
+    const requestConfig = createRequestConfig(url, {
+      ...config,
+      method: 'GET',
+      responseType: 'blob',
+      validateStatus: (status) => status >= 200 && status < 300,
+    })
+    const response = await axios.request<Blob>(requestConfig)
+    return response.data
   },
   post<TResponse, TRequest = unknown>(url: string, data?: TRequest, config?: AxiosRequestConfig): Promise<TResponse> {
     return request<TResponse>(createRequestConfig(url, {

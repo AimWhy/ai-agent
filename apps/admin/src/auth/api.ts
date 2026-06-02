@@ -4,6 +4,7 @@ import type {
   AdminPasswordLoginResponse,
   AdminTokenRefreshRequest,
   AdminTokenRefreshResponse,
+  AvatarUploadResponse,
   UserProfileResponse,
 } from '@repo/contracts'
 import { http } from '@/lib/http'
@@ -27,4 +28,13 @@ export function getAdminUserProfile(accessToken?: string) {
       authorization: `Bearer ${accessToken}`,
     },
   } : undefined)
+}
+
+export async function uploadCurrentUserAvatar(file: File) {
+  const formData = new FormData()
+  formData.set('file', file)
+
+  return http.post<AvatarUploadResponse>('/rpc/user/profile/avatar', formData, {
+    headers: {},
+  })
 }

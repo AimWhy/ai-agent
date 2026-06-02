@@ -5,6 +5,7 @@ import {
   applicationAuthMethods,
   applications,
   authSessions,
+  defaultAvatarVersions,
   passwordCredentials,
   refreshTokens,
   roles,
@@ -290,6 +291,7 @@ export async function findUserProfileById(
       id: users.id,
       name: sql<string>`COALESCE(${users.displayName}, ${userEmails.email})`,
       email: userEmails.email,
+      avatarKey: users.avatarKey,
       status: users.status,
       createdAtMs: users.createdAtMs,
       updatedAtMs: users.updatedAtMs,
@@ -323,6 +325,168 @@ export async function findUserProfileById(
   }
 }
 
+export async function findLatestDefaultAvatarVersion(db: ApiDb): Promise<{
+  key: string
+  updatedAtMs: number
+} | null> {
+  const row = await db
+    .select({
+      key: defaultAvatarVersions.avatarKey,
+      updatedAtMs: defaultAvatarVersions.createdAtMs,
+    })
+    .from(defaultAvatarVersions)
+    .orderBy(sql`${defaultAvatarVersions.createdAtMs} desc, ${defaultAvatarVersions.id} desc`)
+    .limit(1)
+    .get()
+
+  return row ?? null
+}
+
+export async function insertDefaultAvatarVersion(params: {
+  db: ApiDb
+  id: string
+  key: string
+  fileName: string
+  contentType: string
+  sizeBytes: number
+  createdByUserId: string
+  createdAtMs: number
+}): Promise<void> {
+  await params.db.insert(defaultAvatarVersions).values({
+    id: params.id,
+    avatarKey: params.key,
+    fileName: params.fileName,
+    contentType: params.contentType,
+    sizeBytes: params.sizeBytes,
+    createdByUserId: params.createdByUserId,
+    createdAtMs: params.createdAtMs,
+  })
+}
+
+export async function findDefaultAvatarHistory(db: ApiDb): Promise<Array<{
+  id: string
+  key: string
+  fileName: string
+  contentType: string
+  sizeBytes: number
+  createdByUserId: string | null
+  createdAtMs: number
+}>> {
+  const rows = await db
+    .select({
+      id: defaultAvatarVersions.id,
+      key: defaultAvatarVersions.avatarKey,
+      fileName: defaultAvatarVersions.fileName,
+      contentType: defaultAvatarVersions.contentType,
+      sizeBytes: defaultAvatarVersions.sizeBytes,
+      createdByUserId: defaultAvatarVersions.createdByUserId,
+      createdAtMs: defaultAvatarVersions.createdAtMs,
+    })
+    .from(defaultAvatarVersions)
+    .orderBy(sql`${defaultAvatarVersions.createdAtMs} desc, ${defaultAvatarVersions.id} desc`)
+
+  const latestRowByKey = new Map<string, (typeof rows)[number]>()
+
+  for (const row of rows) {
+    if (!latestRowByKey.has(row.key)) {
+      latestRowByKey.set(row.key, row)
+    }
+  }
+
+  return [...latestRowByKey.values()]
+}
+
+export async function findRoleIdByCode(
+  db: ApiDb,
+  code: 'admin_owner' | 'admin_operator',
+): Promise<string | null> {
+  const row = await db
+    .select({ id: roles.id })
+    .from(roles)
+    .where(eq(roles.code, code))
+    .limit(1)
+    .get()
+
+  return row?.id ?? null
+}
+
+export async function updateUserAvatarKey(params: {
+  db: ApiDb
+  userId: string
+  avatarKey: string
+  updatedAtMs: number
+}): Promise<void> {
+  await params.db
+    .update(users)
+    .set({
+      avatarKey: params.avatarKey,
+      updatedAtMs: params.updatedAtMs,
+    })
+    .where(eq(users.id, params.userId))
+}
+
+export async function createUserWithPassword(params: {
+  db: ApiDb
+  userId: string
+  emailId: string
+  credentialId: string
+  roleBindingId: string
+  roleId: string
+  displayName: string
+  email: string
+  normalizedEmail: string
+  passwordHash: string
+  passwordAlgo: 'bcrypt'
+  avatarKey: string | null
+  nowMs: number
+}): Promise<void> {
+  await params.db.batch([
+    params.db.insert(users).values({
+      id: params.userId,
+      status: 'active',
+      displayName: params.displayName,
+      primaryEmailId: params.emailId,
+      avatarKey: params.avatarKey,
+      createdAtMs: params.nowMs,
+      updatedAtMs: params.nowMs,
+      lastLoginAtMs: null,
+    }),
+    params.db.insert(userEmails).values({
+      id: params.emailId,
+      userId: params.userId,
+      email: params.email,
+      normalizedEmail: params.normalizedEmail,
+      isPrimary: 1,
+      isVerified: 1,
+      verifiedAtMs: params.nowMs,
+      source: 'password',
+      createdAtMs: params.nowMs,
+      updatedAtMs: params.nowMs,
+    }),
+    params.db.insert(passwordCredentials).values({
+      id: params.credentialId,
+      userId: params.userId,
+      emailId: params.emailId,
+      passwordHash: params.passwordHash,
+      passwordAlgo: params.passwordAlgo,
+      passwordUpdatedAtMs: params.nowMs,
+      failedAttempts: 0,
+      lockedUntilMs: null,
+      mustResetPassword: 0,
+      createdAtMs: params.nowMs,
+      updatedAtMs: params.nowMs,
+    }),
+    params.db.insert(userRoleBindings).values({
+      id: params.roleBindingId,
+      userId: params.userId,
+      roleId: params.roleId,
+      status: 'active',
+      grantedAtMs: params.nowMs,
+      revokedAtMs: null,
+    }),
+  ])
+}
+
 export async function findUserList(
   db: ApiDb,
   params: {
@@ -342,6 +506,7 @@ export async function findUserList(
       id: users.id,
       name: sql<string>`COALESCE(${users.displayName}, ${userEmails.email})`,
       email: userEmails.email,
+      avatarKey: users.avatarKey,
       status: users.status,
       createdAtMs: users.createdAtMs,
       updatedAtMs: users.updatedAtMs,

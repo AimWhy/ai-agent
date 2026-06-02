@@ -9,6 +9,7 @@ export const UserListItemSchema = z.object({
   id: z.string(),
   name: z.string(),
   email: z.string().email(),
+  avatarKey: z.string().nullable(),
   roles: z.array(z.string()),
   status: z.enum(['active', 'suspended', 'deleted']),
   createdAtMs: z.number().int().nonnegative(),

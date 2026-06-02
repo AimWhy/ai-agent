@@ -12,5 +12,9 @@ export const data = {
       title: 'Profile',
       url: '/profile',
     },
+    {
+      title: '默认头像',
+      url: '/default-avatar',
+    },
   ],
 }

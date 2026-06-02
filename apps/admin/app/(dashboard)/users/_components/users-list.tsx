@@ -17,21 +17,11 @@ import {
   TableHeader,
   TableRow,
 } from '@repo/ui/table'
+import { UserAvatar } from '@/components/user-avatar'
 import { formatOptionalAdminDateTime } from '@/lib/admin-ui'
 
 type UsersListProps = {
   users: UserListItem[]
-}
-
-function getStatusVariant(status: UserListItem['status']): 'secondary' | 'outline' {
-  switch (status) {
-    case 'active':
-      return 'secondary'
-    case 'suspended':
-      return 'outline'
-    default:
-      return 'outline'
-  }
 }
 
 function formatStatus(status: UserListItem['status']) {
@@ -57,7 +47,8 @@ export function UsersList({ users }: UsersListProps) {
           {users.map((user) => (
             <TableRow key={user.id} className="border-border/80">
               <TableCell>
-                <div className="py-2">
+                <div className="flex items-center gap-3 py-2">
+                  <UserAvatar user={user} size="sm" />
                   <p className="font-medium leading-none text-foreground">{user.name}</p>
                 </div>
               </TableCell>
@@ -65,7 +56,14 @@ export function UsersList({ users }: UsersListProps) {
                 <p className="text-sm leading-5 text-muted-foreground">{user.email}</p>
               </TableCell>
               <TableCell>
-                <Badge variant={getStatusVariant(user.status)}>{formatStatus(user.status)}</Badge>
+                {user.status === 'active' ? (
+                  <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                    <span className="size-1 rounded-full bg-emerald-500" />
+                    {formatStatus(user.status)}
+                  </span>
+                ) : (
+                  <Badge variant="outline">{formatStatus(user.status)}</Badge>
+                )}
               </TableCell>
               <TableCell>
                 <div className="flex flex-wrap gap-2">

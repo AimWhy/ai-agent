@@ -7,6 +7,7 @@ import type { AdminAuthSession, UserProfileResponse } from '@repo/contracts'
 import { Badge } from '@repo/ui/badge'
 import { Button } from '@repo/ui/button'
 import { Card, CardDescription, CardHeader, CardTitle } from '@repo/ui/card'
+import { Input } from '@repo/ui/input'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,16 +16,20 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@repo/ui/dropdown-menu'
+import { uploadCurrentUserAvatar } from '@/auth/api'
+import { UserAvatar } from '@/components/user-avatar'
 import { ProfileDetails } from './profile-details'
 import { ProfileSummary } from './profile-summary'
 
 type ProfilePageProps = {
   profile: UserProfileResponse
   session: AdminAuthSession
+  refreshProfile: () => Promise<void>
 }
 
-export function ProfilePage({ profile, session }: ProfilePageProps) {
+export function ProfilePage({ profile, session, refreshProfile }: ProfilePageProps) {
   const [feedback, setFeedback] = useState<string | null>(null)
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false)
 
   useEffect(() => {
     if (!feedback) {
@@ -54,6 +59,28 @@ export function ProfilePage({ profile, session }: ProfilePageProps) {
     }
   }
 
+  async function handleAvatarUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+
+    if (!file) {
+      return
+    }
+
+    setIsUploadingAvatar(true)
+    setFeedback(null)
+
+    try {
+      await uploadCurrentUserAvatar(file)
+      await refreshProfile()
+      setFeedback('Avatar updated.')
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Unable to update avatar.')
+    } finally {
+      setIsUploadingAvatar(false)
+      event.target.value = ''
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6 px-4 py-4 md:px-6 md:py-6">
       <Card>
@@ -62,11 +89,29 @@ export function ProfilePage({ profile, session }: ProfilePageProps) {
             <Badge variant="outline" className="w-fit">
               User profile
             </Badge>
-            <div className="space-y-1">
-              <CardTitle className="text-2xl md:text-3xl">{profile.name}</CardTitle>
-              <CardDescription>
-                {feedback ?? 'Review the account identity, access, and current session context for this workspace member.'}
-              </CardDescription>
+            <div className="flex items-start gap-4">
+              <UserAvatar user={profile} size="lg" />
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <CardTitle className="text-2xl md:text-3xl">{profile.name}</CardTitle>
+                  <CardDescription>
+                    {feedback ?? 'Review the account identity, access, and current session context for this workspace member.'}
+                  </CardDescription>
+                </div>
+                <div className="max-w-xs space-y-2">
+                  <Input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={(event) => {
+                      void handleAvatarUpload(event)
+                    }}
+                    disabled={isUploadingAvatar}
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    {isUploadingAvatar ? 'Uploading avatar...' : '支持 JPG、PNG、WebP，最大 2MB。'}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 

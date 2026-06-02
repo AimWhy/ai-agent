@@ -6,10 +6,23 @@ export const users = sqliteTable('users', {
   status: text('status').notNull(),
   displayName: text('display_name'),
   primaryEmailId: text('primary_email_id'),
+  avatarKey: text('avatar_key'),
   createdAtMs: integer('created_at_ms').notNull(),
   updatedAtMs: integer('updated_at_ms').notNull(),
   lastLoginAtMs: integer('last_login_at_ms'),
 })
+
+export const defaultAvatarVersions = sqliteTable('default_avatar_versions', {
+  id: text('id').primaryKey(),
+  avatarKey: text('avatar_key').notNull(),
+  fileName: text('file_name').notNull(),
+  contentType: text('content_type').notNull(),
+  sizeBytes: integer('size_bytes').notNull(),
+  createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  createdAtMs: integer('created_at_ms').notNull(),
+}, (table) => [
+  index('idx_default_avatar_versions_created_at_ms').on(table.createdAtMs),
+])
 
 export const userEmails = sqliteTable(
   'user_emails',
@@ -180,4 +193,5 @@ export const schema = {
   userRoleBindings,
   authSessions,
   refreshTokens,
+  defaultAvatarVersions,
 }
