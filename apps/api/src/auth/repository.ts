@@ -79,7 +79,6 @@ export async function getAdminRolesForUser(
   db: ApiDb,
   userId: string,
 ): Promise<string[]> {
-  // 这里故意只返回 code 列表，因为后续签 access token 和做 admin 门禁只关心角色代码本身。
   const rows = await db
     .select({ code: roles.code })
     .from(userRoleBindings)
@@ -89,6 +88,7 @@ export async function getAdminRolesForUser(
       and(
         eq(userRoleBindings.userId, userId),
         eq(userRoleBindings.status, 'active'),
+        eq(roles.status, 'active'),
         eq(applications.code, 'admin'),
       ),
     )
@@ -315,6 +315,7 @@ export async function findUserProfileById(
       and(
         eq(userRoleBindings.userId, userId),
         eq(userRoleBindings.status, 'active'),
+        eq(roles.status, 'active'),
       ),
     )
 
@@ -398,16 +399,133 @@ export async function findDefaultAvatarHistory(db: ApiDb): Promise<Array<{
 
 export async function findRoleIdByCode(
   db: ApiDb,
-  code: 'admin_owner' | 'admin_operator',
+  code: string,
 ): Promise<string | null> {
   const row = await db
     .select({ id: roles.id })
     .from(roles)
-    .where(eq(roles.code, code))
+    .where(and(eq(roles.code, code), eq(roles.status, 'active')))
     .limit(1)
     .get()
 
   return row?.id ?? null
+}
+
+export async function findRoleList(db: ApiDb): Promise<Array<{
+  id: string
+  applicationCode: string
+  code: string
+  name: string
+  status: 'active' | 'disabled' | 'deleted'
+  createdAtMs: number
+  updatedAtMs: number
+  disabledAtMs: number | null
+  deletedAtMs: number | null
+}>> {
+  const rows = await db
+    .select({
+      id: roles.id,
+      applicationCode: applications.code,
+      code: roles.code,
+      name: roles.name,
+      status: roles.status,
+      createdAtMs: roles.createdAtMs,
+      updatedAtMs: roles.updatedAtMs,
+      disabledAtMs: roles.disabledAtMs,
+      deletedAtMs: roles.deletedAtMs,
+    })
+    .from(roles)
+    .innerJoin(applications, eq(applications.id, roles.applicationId))
+    .where(sql`${roles.status} != 'deleted'`)
+    .orderBy(sql`${applications.code} asc, ${roles.createdAtMs} desc, ${roles.id} desc`)
+
+  return rows.map((row) => ({
+    ...row,
+    status: row.status as 'active' | 'disabled' | 'deleted',
+  }))
+}
+
+export async function createRole(params: {
+  db: ApiDb
+  id: string
+  applicationId: string
+  code: string
+  name: string
+  nowMs: number
+}): Promise<void> {
+  await params.db.insert(roles).values({
+    id: params.id,
+    applicationId: params.applicationId,
+    code: params.code,
+    name: params.name,
+    status: 'active',
+    createdAtMs: params.nowMs,
+    updatedAtMs: params.nowMs,
+    disabledAtMs: null,
+    deletedAtMs: null,
+  })
+}
+
+export async function findRoleById(
+  db: ApiDb,
+  roleId: string,
+): Promise<{
+  id: string
+  applicationCode: string
+  code: string
+  name: string
+  status: 'active' | 'disabled' | 'deleted'
+} | null> {
+  const row = await db
+    .select({
+      id: roles.id,
+      applicationCode: applications.code,
+      code: roles.code,
+      name: roles.name,
+      status: roles.status,
+    })
+    .from(roles)
+    .innerJoin(applications, eq(applications.id, roles.applicationId))
+    .where(eq(roles.id, roleId))
+    .limit(1)
+    .get()
+
+  return row
+    ? {
+        ...row,
+        status: row.status as 'active' | 'disabled' | 'deleted',
+      }
+    : null
+}
+
+export async function disableRole(params: {
+  db: ApiDb
+  roleId: string
+  nowMs: number
+}): Promise<void> {
+  await params.db
+    .update(roles)
+    .set({
+      status: 'disabled',
+      updatedAtMs: params.nowMs,
+      disabledAtMs: params.nowMs,
+    })
+    .where(eq(roles.id, params.roleId))
+}
+
+export async function deleteRole(params: {
+  db: ApiDb
+  roleId: string
+  nowMs: number
+}): Promise<void> {
+  await params.db
+    .update(roles)
+    .set({
+      status: 'deleted',
+      updatedAtMs: params.nowMs,
+      deletedAtMs: params.nowMs,
+    })
+    .where(eq(roles.id, params.roleId))
 }
 
 export async function updateUserAvatarKey(params: {
@@ -534,6 +652,7 @@ export async function findUserList(
       and(
         inArray(userRoleBindings.userId, userIds),
         eq(userRoleBindings.status, 'active'),
+        eq(roles.status, 'active'),
       ),
     )
 

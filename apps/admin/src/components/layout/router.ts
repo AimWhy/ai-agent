@@ -16,5 +16,9 @@ export const data = {
       title: '默认头像',
       url: '/default-avatar',
     },
+    {
+      title: '角色管理',
+      url: '/roles',
+    },
   ],
 }

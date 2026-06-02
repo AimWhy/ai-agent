@@ -2,23 +2,30 @@
 
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getUsersForPage } from '../api'
+import { getAssignableAdminRoles, getUsersForPage } from '../api'
 
 export function useAdminUsersPage() {
   const [page, setPage] = useState(1)
   const pageSize = 10
 
-  const query = useQuery({
+  const usersQuery = useQuery({
     queryKey: ['dashboard', 'users', 'list', page, pageSize],
     queryFn: () => getUsersForPage({ page, pageSize }),
     staleTime: 60_000,
   })
 
-  const total = query.data?.total ?? 0
-  const totalPages = query.data?.totalPages ?? 0
+  const rolesQuery = useQuery({
+    queryKey: ['dashboard', 'roles', 'assignable-list'],
+    queryFn: getAssignableAdminRoles,
+    staleTime: 60_000,
+  })
+
+  const total = usersQuery.data?.total ?? 0
+  const totalPages = usersQuery.data?.totalPages ?? 0
+  const assignableRoles = (rolesQuery.data?.items ?? []).filter((role) => role.applicationCode === 'admin' && role.status === 'active')
 
   return {
-    users: query.data?.items ?? [],
+    users: usersQuery.data?.items ?? [],
     page,
     pageSize,
     total,
@@ -40,9 +47,10 @@ export function useAdminUsersPage() {
     nextPage: () => {
       setPage((current) => (totalPages > 0 ? Math.min(totalPages, current + 1) : current))
     },
-    isLoading: query.isLoading,
-    isError: query.isError,
-    error: query.error,
-    refetch: query.refetch,
+    assignableRoles,
+    isLoading: usersQuery.isLoading,
+    isError: usersQuery.isError,
+    error: usersQuery.error,
+    refetch: usersQuery.refetch,
   }
 }

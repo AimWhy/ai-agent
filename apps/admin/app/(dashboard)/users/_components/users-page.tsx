@@ -1,11 +1,18 @@
 "use client"
 
 import { useState } from 'react'
-import type { CreateUserRequest, UserListItem } from '@repo/contracts'
+import type { CreateUserRequest, RoleListItem, UserListItem } from '@repo/contracts'
 import { Button } from '@repo/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@repo/ui/card'
 import { Input } from '@repo/ui/input'
 import { Spinner } from '@repo/ui/spinner'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@repo/ui/select'
 import {
   Pagination,
   PaginationContent,
@@ -25,6 +32,7 @@ type UsersPageProps = {
   totalPages: number
   canPrev: boolean
   canNext: boolean
+  assignableRoles: RoleListItem[]
   onPageChange: (page: number) => void
   onPrevPage: () => void
   onNextPage: () => void
@@ -35,14 +43,15 @@ type UsersPageProps = {
   onRetry: () => void
 }
 
-export function UsersPage({ users, page, total, totalPages, canPrev, canNext, onPageChange, onPrevPage, onNextPage, isLoading, isError, errorMessage, onUsersChanged, onRetry }: UsersPageProps) {
+export function UsersPage({ users, page, total, totalPages, canPrev, canNext, assignableRoles, onPageChange, onPrevPage, onNextPage, isLoading, isError, errorMessage, onUsersChanged, onRetry }: UsersPageProps) {
+  const initialRole = assignableRoles[0]?.code ?? ''
   const [isCreatingUser, setIsCreatingUser] = useState(false)
   const [createUserFeedback, setCreateUserFeedback] = useState<string | null>(null)
   const [createUserForm, setCreateUserForm] = useState<CreateUserRequest>({
     name: '',
     email: '',
     password: '',
-    role: 'admin_operator',
+    role: initialRole,
   })
   const visiblePages = (() => {
     if (totalPages <= 5) {
@@ -74,7 +83,7 @@ export function UsersPage({ users, page, total, totalPages, canPrev, canNext, on
         name: '',
         email: '',
         password: '',
-        role: 'admin_operator',
+        role: assignableRoles[0]?.code ?? '',
       })
       onUsersChanged()
     } catch (error) {
@@ -129,19 +138,25 @@ export function UsersPage({ users, page, total, totalPages, canPrev, canNext, on
                   }}
                   disabled={isCreatingUser}
                 />
-                <select
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none"
+                <Select
                   value={createUserForm.role}
-                  onChange={(event) => {
-                    const role = event.target.value as CreateUserRequest['role']
-                    setCreateUserForm((current) => ({ ...current, role }))
+                  onValueChange={(value) => {
+                    setCreateUserForm((current) => ({ ...current, role: value }))
                   }}
-                  disabled={isCreatingUser}
+                  disabled={isCreatingUser || assignableRoles.length === 0}
                 >
-                  <option value="admin_operator">Admin operator</option>
-                  <option value="admin_owner">Admin owner</option>
-                </select>
-                <Button type="submit" disabled={isCreatingUser}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {assignableRoles.map((role) => (
+                      <SelectItem key={role.id} value={role.code}>
+                        {role.name} ({role.code})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button type="submit" disabled={isCreatingUser || assignableRoles.length === 0}>
                   {isCreatingUser ? 'Creating...' : 'Create user'}
                 </Button>
               </div>

@@ -14,6 +14,7 @@ export default function UsersPageRoute() {
     setPage,
     prevPage,
     nextPage,
+    assignableRoles,
     isLoading,
     isError,
     error,
@@ -32,6 +33,7 @@ export default function UsersPageRoute() {
       totalPages={totalPages}
       canPrev={canPrev}
       canNext={canNext}
+      assignableRoles={assignableRoles}
       onPageChange={setPage}
       onPrevPage={prevPage}
       onNextPage={nextPage}

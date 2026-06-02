@@ -1,6 +1,7 @@
 import type {
   CreateUserRequest,
   CreateUserResponse,
+  RoleListResponse,
   UserListResponse,
 } from '@repo/contracts'
 import { http } from '@/lib/http'
@@ -16,4 +17,8 @@ export function getUsersForPage({ page, pageSize }: GetUsersForPageInput) {
 
 export function createUser(input: CreateUserRequest) {
   return http.post<CreateUserResponse, CreateUserRequest>('/rpc/user/create', input)
+}
+
+export function getAssignableAdminRoles() {
+  return http.get<RoleListResponse>('/rpc/role/list')
 }

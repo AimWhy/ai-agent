@@ -110,7 +110,11 @@ export const roles = sqliteTable(
       .references(() => applications.id, { onDelete: 'cascade' }),
     code: text('code').notNull(),
     name: text('name').notNull(),
+    status: text('status').notNull(),
     createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+    disabledAtMs: integer('disabled_at_ms'),
+    deletedAtMs: integer('deleted_at_ms'),
   },
   (table) => [uniqueIndex('idx_roles_application_code_unique').on(table.applicationId, table.code)],
 )
