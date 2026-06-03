@@ -20,5 +20,13 @@ export const data = {
       title: '角色管理',
       url: '/roles',
     },
+    {
+      title: '套餐管理',
+      url: '/subscription-plans',
+    },
+    {
+      title: '订阅管理',
+      url: '/subscriptions',
+    },
   ],
 }

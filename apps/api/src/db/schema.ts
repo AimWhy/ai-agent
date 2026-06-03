@@ -119,6 +119,48 @@ export const roles = sqliteTable(
   (table) => [uniqueIndex('idx_roles_application_code_unique').on(table.applicationId, table.code)],
 )
 
+export const subscriptionPlans = sqliteTable('subscription_plans', {
+  id: text('id').primaryKey(),
+  code: text('code').notNull(),
+  name: text('name').notNull(),
+  description: text('description'),
+  price: text('price').notNull(),
+  billingPeriod: text('billing_period').notNull(),
+  maxAgents: integer('max_agents').notNull(),
+  supportsGroupChat: integer('supports_group_chat').notNull(),
+  supportsMultiAgentLinkage: integer('supports_multi_agent_linkage').notNull(),
+  supportsDiscoverSquare: integer('supports_discover_square').notNull(),
+  supportsAgentTimeEvolution: integer('supports_agent_time_evolution').notNull(),
+  status: text('status').notNull(),
+  createdAtMs: integer('created_at_ms').notNull(),
+  updatedAtMs: integer('updated_at_ms').notNull(),
+  deletedAtMs: integer('deleted_at_ms'),
+}, (table) => [
+  uniqueIndex('idx_subscription_plans_code_unique').on(table.code),
+])
+
+export const userSubscriptionBindings = sqliteTable(
+  'user_subscription_bindings',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    subscriptionPlanId: text('subscription_plan_id')
+      .notNull()
+      .references(() => subscriptionPlans.id, { onDelete: 'restrict' }),
+    status: text('status').notNull(),
+    assignedAtMs: integer('assigned_at_ms').notNull(),
+    assignedByUserId: text('assigned_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    revokedAtMs: integer('revoked_at_ms'),
+  },
+  (table) => [
+    index('idx_user_subscription_bindings_user_id').on(table.userId),
+    index('idx_user_subscription_bindings_plan_id').on(table.subscriptionPlanId),
+    uniqueIndex('idx_user_subscription_bindings_one_active_per_user').on(table.userId).where(sql`${table.status} = 'active'`),
+  ],
+)
+
 export const userRoleBindings = sqliteTable(
   'user_role_bindings',
   {
@@ -198,4 +240,6 @@ export const schema = {
   authSessions,
   refreshTokens,
   defaultAvatarVersions,
+  subscriptionPlans,
+  userSubscriptionBindings,
 }

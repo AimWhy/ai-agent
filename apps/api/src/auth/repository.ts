@@ -9,8 +9,10 @@ import {
   passwordCredentials,
   refreshTokens,
   roles,
+  subscriptionPlans,
   userEmails,
   userRoleBindings,
+  userSubscriptionBindings,
   users,
 } from '@/db/schema'
 import type {
@@ -526,6 +528,282 @@ export async function deleteRole(params: {
       deletedAtMs: params.nowMs,
     })
     .where(eq(roles.id, params.roleId))
+}
+
+export async function listSubscriptionPlans(db: ApiDb): Promise<Array<{
+  id: string
+  code: string
+  name: string
+  description: string | null
+  price: string
+  billingPeriod: 'month' | 'year' | 'one_time'
+  maxAgents: number
+  supportsGroupChat: boolean
+  supportsMultiAgentLinkage: boolean
+  supportsDiscoverSquare: boolean
+  supportsAgentTimeEvolution: boolean
+  status: 'active' | 'disabled' | 'deleted'
+  createdAtMs: number
+  updatedAtMs: number
+  deletedAtMs: number | null
+}>> {
+  const rows = await db
+    .select({
+      id: subscriptionPlans.id,
+      code: subscriptionPlans.code,
+      name: subscriptionPlans.name,
+      description: subscriptionPlans.description,
+      price: subscriptionPlans.price,
+      billingPeriod: subscriptionPlans.billingPeriod,
+      maxAgents: subscriptionPlans.maxAgents,
+      supportsGroupChat: subscriptionPlans.supportsGroupChat,
+      supportsMultiAgentLinkage: subscriptionPlans.supportsMultiAgentLinkage,
+      supportsDiscoverSquare: subscriptionPlans.supportsDiscoverSquare,
+      supportsAgentTimeEvolution: subscriptionPlans.supportsAgentTimeEvolution,
+      status: subscriptionPlans.status,
+      createdAtMs: subscriptionPlans.createdAtMs,
+      updatedAtMs: subscriptionPlans.updatedAtMs,
+      deletedAtMs: subscriptionPlans.deletedAtMs,
+    })
+    .from(subscriptionPlans)
+    .where(sql`${subscriptionPlans.status} != 'deleted'`)
+    .orderBy(sql`${subscriptionPlans.createdAtMs} desc, ${subscriptionPlans.id} desc`)
+
+  return rows.map((row) => ({
+    ...row,
+    billingPeriod: row.billingPeriod as 'month' | 'year' | 'one_time',
+    supportsGroupChat: row.supportsGroupChat === 1,
+    supportsMultiAgentLinkage: row.supportsMultiAgentLinkage === 1,
+    supportsDiscoverSquare: row.supportsDiscoverSquare === 1,
+    supportsAgentTimeEvolution: row.supportsAgentTimeEvolution === 1,
+    status: row.status as 'active' | 'disabled' | 'deleted',
+  }))
+}
+
+export async function createSubscriptionPlan(params: {
+  db: ApiDb
+  id: string
+  code: string
+  name: string
+  description: string | null
+  price: string
+  billingPeriod: 'month' | 'year' | 'one_time'
+  maxAgents: number
+  supportsGroupChat: boolean
+  supportsMultiAgentLinkage: boolean
+  supportsDiscoverSquare: boolean
+  supportsAgentTimeEvolution: boolean
+  nowMs: number
+}): Promise<void> {
+  await params.db.insert(subscriptionPlans).values({
+    id: params.id,
+    code: params.code,
+    name: params.name,
+    description: params.description,
+    price: params.price,
+    billingPeriod: params.billingPeriod,
+    maxAgents: params.maxAgents,
+    supportsGroupChat: params.supportsGroupChat ? 1 : 0,
+    supportsMultiAgentLinkage: params.supportsMultiAgentLinkage ? 1 : 0,
+    supportsDiscoverSquare: params.supportsDiscoverSquare ? 1 : 0,
+    supportsAgentTimeEvolution: params.supportsAgentTimeEvolution ? 1 : 0,
+    status: 'active',
+    createdAtMs: params.nowMs,
+    updatedAtMs: params.nowMs,
+    deletedAtMs: null,
+  })
+}
+
+export async function updateSubscriptionPlan(params: {
+  db: ApiDb
+  planId: string
+  name: string
+  description: string | null
+  price: string
+  billingPeriod: 'month' | 'year' | 'one_time'
+  maxAgents: number
+  supportsGroupChat: boolean
+  supportsMultiAgentLinkage: boolean
+  supportsDiscoverSquare: boolean
+  supportsAgentTimeEvolution: boolean
+  nowMs: number
+}): Promise<void> {
+  await params.db
+    .update(subscriptionPlans)
+    .set({
+      name: params.name,
+      description: params.description,
+      price: params.price,
+      billingPeriod: params.billingPeriod,
+      maxAgents: params.maxAgents,
+      supportsGroupChat: params.supportsGroupChat ? 1 : 0,
+      supportsMultiAgentLinkage: params.supportsMultiAgentLinkage ? 1 : 0,
+      supportsDiscoverSquare: params.supportsDiscoverSquare ? 1 : 0,
+      supportsAgentTimeEvolution: params.supportsAgentTimeEvolution ? 1 : 0,
+      updatedAtMs: params.nowMs,
+    })
+    .where(eq(subscriptionPlans.id, params.planId))
+}
+
+export async function disableSubscriptionPlan(params: {
+  db: ApiDb
+  planId: string
+  nowMs: number
+}): Promise<void> {
+  await params.db
+    .update(subscriptionPlans)
+    .set({
+      status: 'disabled',
+      updatedAtMs: params.nowMs,
+    })
+    .where(eq(subscriptionPlans.id, params.planId))
+}
+
+export async function deleteSubscriptionPlan(params: {
+  db: ApiDb
+  planId: string
+  nowMs: number
+}): Promise<void> {
+  await params.db
+    .update(subscriptionPlans)
+    .set({
+      status: 'deleted',
+      updatedAtMs: params.nowMs,
+      deletedAtMs: params.nowMs,
+    })
+    .where(eq(subscriptionPlans.id, params.planId))
+}
+
+export async function findSubscriptionUserList(
+  db: ApiDb,
+  params: {
+    offset: number
+    limit: number
+  },
+): Promise<{
+  items: Array<{
+    id: string
+    userId: string
+    userName: string
+    userEmail: string
+    userStatus: 'active' | 'suspended' | 'deleted'
+    planId: string
+    planCode: string
+    planName: string
+    planPrice: string
+    planBillingPeriod: 'month' | 'year' | 'one_time'
+    assignedAtMs: number
+    assignedByUserId: string | null
+  }>
+  total: number
+}> {
+  const totalRow = await db
+    .select({ total: sql<number>`count(*)` })
+    .from(userSubscriptionBindings)
+    .where(eq(userSubscriptionBindings.status, 'active'))
+    .get()
+
+  const total = Number(totalRow?.total ?? 0)
+
+  const rows = await db
+    .select({
+      id: userSubscriptionBindings.id,
+      userId: users.id,
+      userName: sql<string>`COALESCE(${users.displayName}, ${userEmails.email})`,
+      userEmail: userEmails.email,
+      userStatus: users.status,
+      planId: subscriptionPlans.id,
+      planCode: subscriptionPlans.code,
+      planName: subscriptionPlans.name,
+      planPrice: subscriptionPlans.price,
+      planBillingPeriod: subscriptionPlans.billingPeriod,
+      assignedAtMs: userSubscriptionBindings.assignedAtMs,
+      assignedByUserId: userSubscriptionBindings.assignedByUserId,
+    })
+    .from(userSubscriptionBindings)
+    .innerJoin(users, eq(users.id, userSubscriptionBindings.userId))
+    .innerJoin(userEmails, eq(userEmails.id, users.primaryEmailId))
+    .innerJoin(subscriptionPlans, eq(subscriptionPlans.id, userSubscriptionBindings.subscriptionPlanId))
+    .where(eq(userSubscriptionBindings.status, 'active'))
+    .orderBy(sql`${userSubscriptionBindings.assignedAtMs} desc, ${userSubscriptionBindings.id} desc`)
+    .limit(params.limit)
+    .offset(params.offset)
+
+  return {
+    total,
+    items: rows.map((row) => ({
+      ...row,
+      userStatus: row.userStatus as 'active' | 'suspended' | 'deleted',
+      planBillingPeriod: row.planBillingPeriod as 'month' | 'year' | 'one_time',
+    })),
+  }
+}
+
+export async function findActiveUserById(
+  db: ApiDb,
+  userId: string,
+): Promise<{ id: string } | null> {
+  const row = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.id, userId), eq(users.status, 'active')))
+    .limit(1)
+    .get()
+
+  return row ?? null
+}
+
+export async function findActiveSubscriptionPlanById(
+  db: ApiDb,
+  planId: string,
+): Promise<{ id: string } | null> {
+  const row = await db
+    .select({ id: subscriptionPlans.id })
+    .from(subscriptionPlans)
+    .where(and(eq(subscriptionPlans.id, planId), eq(subscriptionPlans.status, 'active')))
+    .limit(1)
+    .get()
+
+  return row ?? null
+}
+
+export async function assignUserSubscriptionPlan(params: {
+  db: ApiDb
+  bindingId: string
+  userId: string
+  planId: string
+  assignedByUserId: string
+  nowMs: number
+}): Promise<void> {
+  const currentBinding = await params.db
+    .select({ id: userSubscriptionBindings.id, planId: userSubscriptionBindings.subscriptionPlanId })
+    .from(userSubscriptionBindings)
+    .where(and(eq(userSubscriptionBindings.userId, params.userId), eq(userSubscriptionBindings.status, 'active')))
+    .limit(1)
+    .get()
+
+  if (currentBinding?.planId === params.planId) {
+    return
+  }
+
+  await params.db.batch([
+    params.db
+      .update(userSubscriptionBindings)
+      .set({
+        status: 'revoked',
+        revokedAtMs: params.nowMs,
+      })
+      .where(and(eq(userSubscriptionBindings.userId, params.userId), eq(userSubscriptionBindings.status, 'active'))),
+    params.db.insert(userSubscriptionBindings).values({
+      id: params.bindingId,
+      userId: params.userId,
+      subscriptionPlanId: params.planId,
+      status: 'active',
+      assignedAtMs: params.nowMs,
+      assignedByUserId: params.assignedByUserId,
+      revokedAtMs: null,
+    }),
+  ])
 }
 
 export async function updateUserAvatarKey(params: {
