@@ -1,4 +1,4 @@
-export type AdminAppName = 'admin'
+export type AuthAppName = 'admin' | 'web'
 
 // 这是登录阶段从数据库一次性取回的最小结果集，后面的密码校验和状态判断都依赖它。
 export type LoginUserRecord = {
@@ -14,7 +14,7 @@ export type LoginUserRecord = {
 export type SessionContext = {
   sessionId: string
   userId: string
-  app: AdminAppName
+  app: AuthAppName
   roles: string[]
   expiresAtMs: number
 }
@@ -35,7 +35,7 @@ export type RefreshTokenRecord = {
 export type AccessTokenClaims = {
   sub: string
   sid: string
-  app: AdminAppName
+  app: AuthAppName
   roles: string[]
 }
 
@@ -43,7 +43,7 @@ export type AccessTokenClaims = {
 export type RefreshTokenClaims = {
   sub: string
   sid: string
-  app: AdminAppName
+  app: AuthAppName
   jti: string
 }
 

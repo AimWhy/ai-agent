@@ -11,13 +11,17 @@
     "check-types": "next typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@hookform/resolvers": "catalog:",
     "@repo/api": "workspace:*",
     "@repo/contracts": "workspace:*",
     "@repo/ui": "workspace:*",
     "@tanstack/react-query": "catalog:",
+    "axios": "^1.9.0",
     "hono": "^4.12.14",
+    "lucide-react": "catalog:",
     "next": "catalog:",
     "react": "catalog:",
+    "react-hook-form": "catalog:",
     "react-dom": "catalog:",
     "uuidv7": "catalog:",
     "zod": "catalog:"

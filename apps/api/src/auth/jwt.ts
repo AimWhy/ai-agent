@@ -2,6 +2,7 @@ import { SignJWT, jwtVerify } from 'jose'
 import { uuidv7 } from 'uuidv7'
 import type {
   AccessTokenClaims,
+  AuthAppName,
   RefreshTokenClaims,
   SessionContext,
 } from './types'
@@ -10,6 +11,12 @@ const encoder = new TextEncoder()
 
 function toSecret(secret: string): Uint8Array {
   return encoder.encode(secret)
+}
+
+type ExpectedApp = AuthAppName | AuthAppName[]
+
+function isExpectedApp(app: string, expectedApp: ExpectedApp) {
+  return Array.isArray(expectedApp) ? expectedApp.includes(app as AuthAppName) : app === expectedApp
 }
 
 export async function signAccessToken(params: {
@@ -61,6 +68,7 @@ export async function signRefreshToken(params: {
 export async function verifyAccessToken(params: {
   token: string
   secret: string
+  expectedApp?: ExpectedApp
 }): Promise<AccessTokenClaims> {
   const { payload } = await jwtVerify(params.token, toSecret(params.secret), {
     algorithms: ['HS256'],
@@ -70,12 +78,13 @@ export async function verifyAccessToken(params: {
   const app = payload.app
   const roles = payload.roles
   const sub = payload.sub
+  const expectedApp = params.expectedApp ?? 'admin'
 
   if (
     typeof sid !== 'string' ||
     typeof app !== 'string' ||
     typeof sub !== 'string' ||
-    app !== 'admin' ||
+    !isExpectedApp(app, expectedApp) ||
     !Array.isArray(roles) ||
     roles.some((role) => typeof role !== 'string')
   ) {
@@ -84,7 +93,7 @@ export async function verifyAccessToken(params: {
 
   return {
     sid,
-    app: 'admin',
+    app: app as AuthAppName,
     roles,
     sub,
   }
@@ -93,6 +102,7 @@ export async function verifyAccessToken(params: {
 export async function verifyRefreshToken(params: {
   token: string
   secret: string
+  expectedApp?: ExpectedApp
 }): Promise<RefreshTokenClaims> {
   const { payload } = await jwtVerify(params.token, toSecret(params.secret), {
     algorithms: ['HS256'],
@@ -102,26 +112,27 @@ export async function verifyRefreshToken(params: {
   const app = payload.app
   const jti = payload.jti
   const sub = payload.sub
+  const expectedApp = params.expectedApp ?? 'admin'
 
   if (
     typeof sid !== 'string' ||
     typeof app !== 'string' ||
     typeof jti !== 'string' ||
     typeof sub !== 'string' ||
-    app !== 'admin'
+    !isExpectedApp(app, expectedApp)
   ) {
     throw new Error('Invalid refresh token claims')
   }
 
   return {
     sid,
-    app: 'admin',
+    app: app as AuthAppName,
     jti,
     sub,
   }
 }
 
-export async function issueAdminTokenPair(params: {
+export async function issueTokenPair(params: {
   session: SessionContext
   accessSecret: string
   refreshSecret: string
@@ -158,4 +169,14 @@ export async function issueAdminTokenPair(params: {
     refreshToken: refresh.token,
     refreshJti: refresh.jti,
   }
+}
+
+export async function issueAdminTokenPair(params: {
+  session: SessionContext
+  accessSecret: string
+  refreshSecret: string
+  accessTtlSec: number
+  refreshTtlSec: number
+}) {
+  return issueTokenPair(params)
 }

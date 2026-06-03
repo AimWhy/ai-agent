@@ -39,7 +39,7 @@ import { assertAvatarFile, buildDefaultAvatarKey, buildUserAvatarKey } from '@/l
 
 const userRoute = new Hono<{ Bindings: ApiBindings }>()
 
-async function requireAdminAccessToken(c: Context<{ Bindings: ApiBindings }>) {
+async function requireAccessToken(c: Context<{ Bindings: ApiBindings }>, expectedApp: 'admin' | 'web' | Array<'admin' | 'web'>) {
   const authorization = c.req.header('authorization')
 
   if (!authorization?.startsWith('Bearer ')) {
@@ -58,14 +58,23 @@ async function requireAdminAccessToken(c: Context<{ Bindings: ApiBindings }>) {
     return await verifyAccessToken({
       token,
       secret: env.JWT_ACCESS_SECRET,
+      expectedApp,
     })
   } catch {
     throw authUnauthorizedError('Access token is invalid')
   }
 }
 
+async function requireAdminAccessToken(c: Context<{ Bindings: ApiBindings }>) {
+  return requireAccessToken(c, 'admin')
+}
+
+async function requireProfileAccessToken(c: Context<{ Bindings: ApiBindings }>) {
+  return requireAccessToken(c, ['admin', 'web'])
+}
+
 userRoute.get('/profile', async (c) => {
-  const claims = await requireAdminAccessToken(c)
+  const claims = await requireProfileAccessToken(c)
   const profile = await findUserProfileById(getDb(c.env.DB), claims.sub)
 
   if (!profile) {

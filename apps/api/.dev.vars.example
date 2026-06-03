@@ -1,4 +1,6 @@
 APP_ENV=development
+ADMIN_ORIGIN=http://localhost:3006
+WEB_ORIGIN=http://localhost:3005
 JWT_ACCESS_SECRET=dev-access-secret-please-change
 JWT_REFRESH_SECRET=dev-refresh-secret-please-change
 ACCESS_TOKEN_TTL_SEC=900

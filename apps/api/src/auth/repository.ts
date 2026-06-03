@@ -23,14 +23,14 @@ import type {
   UserProfileRecord,
 } from './types'
 
-export async function isPasswordLoginEnabledForAdmin(db: ApiDb): Promise<boolean> {
+export async function isPasswordLoginEnabledForApp(db: ApiDb, appCode: 'admin' | 'web'): Promise<boolean> {
   const row = await db
     .select({ enabled: applicationAuthMethods.enabled })
     .from(applicationAuthMethods)
     .innerJoin(applications, eq(applications.id, applicationAuthMethods.applicationId))
     .where(
       and(
-        eq(applications.code, 'admin'),
+        eq(applications.code, appCode),
         eq(applications.status, 'active'),
         eq(applicationAuthMethods.provider, 'password'),
       ),
@@ -39,6 +39,14 @@ export async function isPasswordLoginEnabledForAdmin(db: ApiDb): Promise<boolean
     .get()
 
   return row?.enabled === 1
+}
+
+export async function isPasswordLoginEnabledForAdmin(db: ApiDb): Promise<boolean> {
+  return isPasswordLoginEnabledForApp(db, 'admin')
+}
+
+export async function isPasswordLoginEnabledForWeb(db: ApiDb): Promise<boolean> {
+  return isPasswordLoginEnabledForApp(db, 'web')
 }
 
 export async function findLoginUserByNormalizedEmail(
@@ -77,9 +85,10 @@ export async function findLoginUserByNormalizedEmail(
     : null
 }
 
-export async function getAdminRolesForUser(
+export async function getRolesForUserByApp(
   db: ApiDb,
   userId: string,
+  appCode: 'admin' | 'web',
 ): Promise<string[]> {
   const rows = await db
     .select({ code: roles.code })
@@ -91,32 +100,56 @@ export async function getAdminRolesForUser(
         eq(userRoleBindings.userId, userId),
         eq(userRoleBindings.status, 'active'),
         eq(roles.status, 'active'),
-        eq(applications.code, 'admin'),
+        eq(applications.code, appCode),
       ),
     )
 
   return rows.map((row) => row.code)
 }
 
-export async function getAdminApplicationId(db: ApiDb): Promise<string> {
+export async function getAdminRolesForUser(
+  db: ApiDb,
+  userId: string,
+): Promise<string[]> {
+  return getRolesForUserByApp(db, userId, 'admin')
+}
+
+export async function getWebRolesForUser(
+  db: ApiDb,
+  userId: string,
+): Promise<string[]> {
+  return getRolesForUserByApp(db, userId, 'web')
+}
+
+export async function getApplicationIdByCode(db: ApiDb, appCode: 'admin' | 'web'): Promise<string> {
   const row = await db
     .select({ id: applications.id })
     .from(applications)
-    .where(eq(applications.code, 'admin'))
+    .where(eq(applications.code, appCode))
     .limit(1)
     .get()
 
   if (!row) {
-    throw new Error('Admin application is missing')
+    throw new Error(`${appCode} application is missing`)
   }
 
   return row.id
 }
 
-export async function createAdminSession(params: {
+export async function getAdminApplicationId(db: ApiDb): Promise<string> {
+  return getApplicationIdByCode(db, 'admin')
+}
+
+export async function getWebApplicationId(db: ApiDb): Promise<string> {
+  return getApplicationIdByCode(db, 'web')
+}
+
+export async function createAuthSession(params: {
   db: ApiDb
   userId: string
   applicationId: string
+  app: 'admin' | 'web'
+  sessionType: 'admin' | 'web'
   userAgent: string | null
   ip: string | null
   nowMs: number
@@ -131,7 +164,7 @@ export async function createAdminSession(params: {
       id: sessionId,
       userId: params.userId,
       applicationId: params.applicationId,
-      sessionType: 'admin',
+      sessionType: params.sessionType,
       deviceName: null,
       userAgent: params.userAgent,
       ip: params.ip,
@@ -153,10 +186,44 @@ export async function createAdminSession(params: {
   return {
     sessionId,
     userId: params.userId,
-    app: 'admin',
+    app: params.app,
     roles: params.roles,
     expiresAtMs: params.expiresAtMs,
   }
+}
+
+export async function createAdminSession(params: {
+  db: ApiDb
+  userId: string
+  applicationId: string
+  userAgent: string | null
+  ip: string | null
+  nowMs: number
+  expiresAtMs: number
+  roles: string[]
+}): Promise<SessionContext> {
+  return createAuthSession({
+    ...params,
+    app: 'admin',
+    sessionType: 'admin',
+  })
+}
+
+export async function createWebSession(params: {
+  db: ApiDb
+  userId: string
+  applicationId: string
+  userAgent: string | null
+  ip: string | null
+  nowMs: number
+  expiresAtMs: number
+  roles: string[]
+}): Promise<SessionContext> {
+  return createAuthSession({
+    ...params,
+    app: 'web',
+    sessionType: 'web',
+  })
 }
 
 export async function insertRefreshToken(params: {

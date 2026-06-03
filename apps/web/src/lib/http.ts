@@ -1,8 +1,8 @@
 import axios, { AxiosError, type AxiosRequestConfig, type RawAxiosRequestHeaders } from 'axios'
-import type { ApiResponse, AdminTokenRefreshResponse, BizCodeValue } from '@repo/contracts'
+import type { ApiResponse, BizCodeValue, WebTokenRefreshResponse } from '@repo/contracts'
 import { clearClientSession, readClientSession, saveClientRefreshSession } from '@/auth/client-session'
-import { getAdminClientEnv } from '@/env.client'
-import { getAdminServerEnv } from '@/env.server'
+import { getWebClientEnv } from '@/env.client'
+import { getWebServerEnv } from '@/env.server'
 
 const unauthorizedBizCodes: Set<BizCodeValue> = new Set([
   'AUTH.UNAUTHORIZED',
@@ -12,10 +12,10 @@ let refreshPromise: Promise<void> | null = null
 
 function resolveBaseURL(): string {
   if (typeof window !== 'undefined') {
-    return getAdminClientEnv().NEXT_PUBLIC_API_BASE_URL
+    return getWebClientEnv().NEXT_PUBLIC_API_BASE_URL
   }
 
-  return getAdminServerEnv().API_BASE_URL
+  return getWebServerEnv().API_BASE_URL
 }
 
 function shouldAttachAccessToken(headers: AxiosRequestConfig['headers']) {
@@ -56,7 +56,7 @@ function shouldTryRefresh(config: AxiosRequestConfig, payload: ApiResponse<unkno
     return false
   }
 
-  if (config.url?.includes('/auth/admin/token/refresh')) {
+  if (config.url?.includes('/auth/web/token/refresh')) {
     return false
   }
 
@@ -87,9 +87,9 @@ async function refreshClientSession() {
     throw new Error('Session refresh failed')
   }
 
-  const response = await axios.request<ApiResponse<AdminTokenRefreshResponse>>({
+  const response = await axios.request<ApiResponse<WebTokenRefreshResponse>>({
     baseURL: resolveBaseURL(),
-    url: '/auth/admin/token/refresh',
+    url: '/auth/web/token/refresh',
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -100,8 +100,8 @@ async function refreshClientSession() {
     validateStatus: () => true,
   })
 
-  const data = unwrapApiResponse<AdminTokenRefreshResponse>({
-    url: '/auth/admin/token/refresh',
+  const data = unwrapApiResponse<WebTokenRefreshResponse>({
+    url: '/auth/web/token/refresh',
     method: 'POST',
   }, response.data)
 
@@ -155,16 +155,6 @@ export const http = {
       ...config,
       method: 'GET',
     }))
-  },
-  async getRaw(url: string, config?: AxiosRequestConfig): Promise<Blob> {
-    const requestConfig = createRequestConfig(url, {
-      ...config,
-      method: 'GET',
-      responseType: 'blob',
-      validateStatus: (status) => status >= 200 && status < 300,
-    })
-    const response = await axios.request<Blob>(requestConfig)
-    return response.data
   },
   post<TResponse, TRequest = unknown>(url: string, data?: TRequest, config?: AxiosRequestConfig): Promise<TResponse> {
     return request<TResponse>(createRequestConfig(url, {

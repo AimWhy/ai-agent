@@ -12,8 +12,9 @@ const app = new Hono<{ Bindings: ApiBindings }>()
 
 app.use('*', async (c, next) => {
   const env = getApiEnv(c.env)
+  const allowedOrigins = new Set([env.ADMIN_ORIGIN, env.WEB_ORIGIN])
   const corsMiddleware = cors({
-    origin: env.ADMIN_ORIGIN,
+    origin: (origin) => allowedOrigins.has(origin) ? origin : env.ADMIN_ORIGIN,
     allowMethods: ['GET', 'POST', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
   })
