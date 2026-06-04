@@ -1,4 +1,5 @@
 @import "@repo/ui/theme.css";
+@source "../node_modules/streamdown/dist/*.js";
 
 html {
   color-scheme: light;

@@ -22,7 +22,9 @@
     "ADMIN_ORIGIN": "http://localhost:3006",
     "WEB_ORIGIN": "http://localhost:3005",
     "ACCESS_TOKEN_TTL_SEC": "900",
-    "REFRESH_TOKEN_TTL_SEC": "2592000"
+    "REFRESH_TOKEN_TTL_SEC": "2592000",
+    "DEEPSEEK_BASE_URL": "https://api.deepseek.com/v1",
+    "DEEPSEEK_MODEL": "deepseek-chat"
   },
   "env": {
     "test": {
@@ -45,7 +47,9 @@
         "ADMIN_ORIGIN": "http://localhost:3006",
         "WEB_ORIGIN": "http://localhost:3005",
         "ACCESS_TOKEN_TTL_SEC": "900",
-        "REFRESH_TOKEN_TTL_SEC": "2592000"
+        "REFRESH_TOKEN_TTL_SEC": "2592000",
+        "DEEPSEEK_BASE_URL": "https://api.deepseek.com/v1",
+        "DEEPSEEK_MODEL": "deepseek-chat"
       }
     },
     "production": {
@@ -68,7 +72,9 @@
         "ADMIN_ORIGIN": "http://localhost:3006",
         "WEB_ORIGIN": "http://localhost:3005",
         "ACCESS_TOKEN_TTL_SEC": "900",
-        "REFRESH_TOKEN_TTL_SEC": "2592000"
+        "REFRESH_TOKEN_TTL_SEC": "2592000",
+        "DEEPSEEK_BASE_URL": "https://api.deepseek.com/v1",
+        "DEEPSEEK_MODEL": "deepseek-chat"
       }
     }
   }

@@ -1,9 +1,12 @@
 import { DashboardShell } from "./_components/dashboard-shell"
+import { InboxChat } from "./_components/inbox-chat"
 
 const inboxMails = [
   {
     name: "William Smith",
+    sender: "William Smith",
     email: "williamsmith@example.com",
+    senderEmail: "williamsmith@example.com",
     subject: "Meeting Tomorrow",
     date: "09:34 AM",
     teaser:
@@ -11,7 +14,9 @@ const inboxMails = [
   },
   {
     name: "Alice Smith",
+    sender: "Alice Smith",
     email: "alicesmith@example.com",
+    senderEmail: "alicesmith@example.com",
     subject: "Re: Project Update",
     date: "Yesterday",
     teaser:
@@ -19,7 +24,9 @@ const inboxMails = [
   },
   {
     name: "Bob Johnson",
+    sender: "Bob Johnson",
     email: "bobjohnson@example.com",
+    senderEmail: "bobjohnson@example.com",
     subject: "Weekend Plans",
     date: "2 days ago",
     teaser:
@@ -27,7 +34,9 @@ const inboxMails = [
   },
   {
     name: "Emily Davis",
+    sender: "Emily Davis",
     email: "emilydavis@example.com",
+    senderEmail: "emilydavis@example.com",
     subject: "Re: Question about Budget",
     date: "2 days ago",
     teaser:
@@ -35,7 +44,9 @@ const inboxMails = [
   },
   {
     name: "Michael Wilson",
+    sender: "Michael Wilson",
     email: "michaelwilson@example.com",
+    senderEmail: "michaelwilson@example.com",
     subject: "Important Announcement",
     date: "1 week ago",
     teaser:
@@ -43,7 +54,9 @@ const inboxMails = [
   },
   {
     name: "Sarah Brown",
+    sender: "Sarah Brown",
     email: "sarahbrown@example.com",
+    senderEmail: "sarahbrown@example.com",
     subject: "Re: Feedback on Proposal",
     date: "1 week ago",
     teaser:
@@ -51,7 +64,9 @@ const inboxMails = [
   },
   {
     name: "David Lee",
+    sender: "David Lee",
     email: "davidlee@example.com",
+    senderEmail: "davidlee@example.com",
     subject: "New Project Idea",
     date: "1 week ago",
     teaser:
@@ -59,7 +74,9 @@ const inboxMails = [
   },
   {
     name: "Olivia Wilson",
+    sender: "Olivia Wilson",
     email: "oliviawilson@example.com",
+    senderEmail: "oliviawilson@example.com",
     subject: "Vacation Plans",
     date: "1 week ago",
     teaser:
@@ -67,7 +84,9 @@ const inboxMails = [
   },
   {
     name: "James Martin",
+    sender: "James Martin",
     email: "jamesmartin@example.com",
+    senderEmail: "jamesmartin@example.com",
     subject: "Re: Conference Registration",
     date: "1 week ago",
     teaser:
@@ -75,13 +94,17 @@ const inboxMails = [
   },
   {
     name: "Sophia White",
+    sender: "Sophia White",
     email: "sophiawhite@example.com",
+    senderEmail: "sophiawhite@example.com",
     subject: "Team Dinner",
     date: "1 week ago",
     teaser:
       "To celebrate our recent project success, I'd like to organize a team dinner.\nAre you available next Friday evening? Please let me know your preferences.",
   },
 ]
+
+const selectedMail = inboxMails[0]!
 
 export default function Page() {
   return (
@@ -119,38 +142,7 @@ export default function Page() {
           </div>
         </aside>
 
-        <div className="flex-1 flex min-h-[640px] flex-col">
-          <div className="border-b p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-semibold tracking-tight">Meeting Tomorrow</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  William Smith · williamsmith@example.com
-                </p>
-              </div>
-              <span className="text-xs text-muted-foreground">09:34 AM</span>
-            </div>
-          </div>
-
-          <div className="flex flex-1 flex-col gap-4 p-4">
-            <div className="max-w-2xl rounded-none bg-muted p-4 text-sm leading-6">
-              Hi team, just a reminder about our meeting tomorrow at 10 AM.
-              Please come prepared with your project updates.
-            </div>
-            <div className="ml-auto max-w-2xl rounded-none bg-primary p-4 text-sm leading-6 text-primary-foreground">
-              收到，我会准备 Agent 订阅页和 dashboard 路由结构的最新进展。
-            </div>
-            <div className="max-w-2xl rounded-none bg-muted p-4 text-sm leading-6">
-              Great. Please include the navigation changes and any open questions for the next milestone.
-            </div>
-          </div>
-
-          <div className="border-t p-4">
-            <div className="rounded-none border bg-background p-4 text-sm text-muted-foreground">
-              输入回复内容...
-            </div>
-          </div>
-        </div>
+        <InboxChat mail={selectedMail} />
       </div>
     </DashboardShell>
   )

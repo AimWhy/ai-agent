@@ -51,6 +51,14 @@ export type {
   WebTokenRefreshResponse,
 } from './auth/web-token-refresh.contract'
 export {
+  InboxChatMessageSchema,
+  InboxChatRequestSchema,
+} from './chat/inbox-chat.contract'
+export type {
+  InboxChatMessage,
+  InboxChatRequest,
+} from './chat/inbox-chat.contract'
+export {
   BizCode,
 } from './common/biz-code'
 export type {

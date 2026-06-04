@@ -7,4 +7,7 @@ export type ApiBindings = CloudflareBindings & {
   JWT_REFRESH_SECRET: string
   ACCESS_TOKEN_TTL_SEC: string | number
   REFRESH_TOKEN_TTL_SEC: string | number
+  DEEPSEEK_API_KEY?: string
+  DEEPSEEK_BASE_URL?: string
+  DEEPSEEK_MODEL?: string
 }

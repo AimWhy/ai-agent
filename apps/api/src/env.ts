@@ -9,6 +9,9 @@ const apiEnvSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(16),
   ACCESS_TOKEN_TTL_SEC: z.coerce.number().int().positive(),
   REFRESH_TOKEN_TTL_SEC: z.coerce.number().int().positive(),
+  DEEPSEEK_API_KEY: z.string().min(1).optional(),
+  DEEPSEEK_BASE_URL: z.string().url().optional(),
+  DEEPSEEK_MODEL: z.string().min(1).optional(),
 })
 
 export type ApiEnv = z.infer<typeof apiEnvSchema>
@@ -22,5 +25,8 @@ export function getApiEnv(bindings: ApiBindings): ApiEnv {
     JWT_REFRESH_SECRET: bindings.JWT_REFRESH_SECRET,
     ACCESS_TOKEN_TTL_SEC: bindings.ACCESS_TOKEN_TTL_SEC,
     REFRESH_TOKEN_TTL_SEC: bindings.REFRESH_TOKEN_TTL_SEC,
+    DEEPSEEK_API_KEY: bindings.DEEPSEEK_API_KEY,
+    DEEPSEEK_BASE_URL: bindings.DEEPSEEK_BASE_URL,
+    DEEPSEEK_MODEL: bindings.DEEPSEEK_MODEL,
   })
 }
