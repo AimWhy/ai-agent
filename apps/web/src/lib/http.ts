@@ -128,7 +128,9 @@ async function request<T>(config: AxiosRequestConfig): Promise<T> {
     if (appError.shouldRefresh) {
       try {
         await ensureClientRefresh()
-        const { authorization: _authorization, Authorization: _Authorization, ...retryHeaders } = (config.headers ?? {}) as RawAxiosRequestHeaders
+        const retryHeaders = { ...((config.headers ?? {}) as RawAxiosRequestHeaders) }
+        delete retryHeaders.authorization
+        delete retryHeaders.Authorization
         const retryConfig = createRequestConfig(config.url ?? '', {
           ...config,
           headers: retryHeaders,

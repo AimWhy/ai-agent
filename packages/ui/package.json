@@ -5,6 +5,7 @@
   "exports": {
     "./theme.css": "./src/theme.css",
     "./lib/utils": "./src/lib/utils.ts",
+    "./accordion": "./src/components/ui/accordion.tsx",
     "./avatar": "./src/components/ui/avatar.tsx",
     "./badge": "./src/components/ui/badge.tsx",
     "./breadcrumb": "./src/components/ui/breadcrumb.tsx",

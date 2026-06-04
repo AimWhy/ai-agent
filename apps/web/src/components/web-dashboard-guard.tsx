@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { UserProfileResponse, WebAuthSession } from '@repo/contracts'
 import { clearClientSession, readClientSession, sessionChangedEventName } from '@/auth/client-session'
@@ -23,7 +23,7 @@ export function WebDashboardGuard({ children }: WebDashboardGuardProps) {
   const [context, setContext] = useState<WebDashboardContextValue | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  async function loadProfile() {
+  const loadProfile = useCallback(async function loadProfile() {
     const storedSession = readClientSession()
 
     if (!storedSession) {
@@ -49,7 +49,7 @@ export function WebDashboardGuard({ children }: WebDashboardGuardProps) {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [router])
 
   useEffect(() => {
     function handleSessionChanged() {
@@ -63,7 +63,7 @@ export function WebDashboardGuard({ children }: WebDashboardGuardProps) {
     return () => {
       window.removeEventListener(sessionChangedEventName, handleSessionChanged)
     }
-  }, [router])
+  }, [loadProfile])
 
   if (isLoading || !context) {
     return <div className="flex min-h-[50vh] items-center justify-center text-sm text-muted-foreground">Loading workspace…</div>
