@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { ArchiveX, Command, File, Inbox, Send, Sparkles, Trash2 } from "lucide-react"
+import { Bot, Brain, Command, Compass, Heart, Inbox, Sparkles } from "lucide-react"
 
 import { NavUser } from "./nav-user"
 import {
@@ -30,24 +30,24 @@ const data = {
       icon: Inbox,
     },
     {
-      title: "Drafts",
-      url: "/drafts",
-      icon: File,
+      title: "发现",
+      url: "/discover",
+      icon: Compass,
     },
     {
-      title: "Sent",
-      url: "/sent",
-      icon: Send,
+      title: "创建 Agent 伴侣",
+      url: "/create-agent-companion",
+      icon: Bot,
     },
     {
-      title: "Junk",
-      url: "/junk",
-      icon: ArchiveX,
+      title: "我的伴侣",
+      url: "/companions",
+      icon: Heart,
     },
     {
-      title: "Trash",
-      url: "/trash",
-      icon: Trash2,
+      title: "记忆库",
+      url: "/memories",
+      icon: Brain,
     },
     {
       title: "订阅套餐",
