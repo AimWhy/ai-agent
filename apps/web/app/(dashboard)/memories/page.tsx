@@ -29,6 +29,7 @@ const memories = [
     updatedAt: "刚刚",
     content: "用户更接受直接、清晰但语气柔和的建议，不喜欢过度铺垫。",
     pinned: true,
+    spanClassName: "row-span-3 md:col-span-2",
   },
   {
     title: "睡前聊天需要低压节奏",
@@ -39,6 +40,7 @@ const memories = [
     updatedAt: "12 分钟前",
     content: "睡前更适合安静、短句、少提问的陪伴方式。",
     pinned: false,
+    spanClassName: "row-span-3",
   },
   {
     title: "正在练习主动表达好感",
@@ -49,6 +51,7 @@ const memories = [
     updatedAt: "今天",
     content: "用户希望表达主动，但需要避免显得太用力或给对方压力。",
     pinned: true,
+    spanClassName: "row-span-4",
   },
   {
     title: "不喜欢操控式聊天建议",
@@ -59,6 +62,18 @@ const memories = [
     updatedAt: "昨天",
     content: "所有 Agent 伴侣都应避免制造焦虑、操控对方或诱导过度解读。",
     pinned: false,
+    spanClassName: "row-span-3 md:col-span-2 2xl:col-span-1",
+  },
+  {
+    title: "重要聊天适合先写草稿",
+    type: "对话风格",
+    source: "林澈",
+    scope: "全部伴侣可用",
+    confidence: "中",
+    updatedAt: "本周",
+    content: "面对重要关系对话时，用户更希望先整理草稿，再决定是否发送。",
+    pinned: false,
+    spanClassName: "row-span-3",
   },
 ]
 
@@ -74,13 +89,59 @@ const memoryStats = [
   { label: "待确认", value: "14", icon: Clock3 },
 ]
 
-const filters = ["全部", "偏好", "边界", "关系目标", "场景", "待确认"]
+const filters = [
+  { label: "全部", meta: "86 条" },
+  { label: "偏好", meta: "24 条" },
+  { label: "边界", meta: "18 条" },
+  { label: "关系目标", meta: "13 条" },
+  { label: "场景", meta: "10 条" },
+  { label: "待确认", meta: "14 条" },
+]
 
 const categories = [
   { label: "偏好", value: "24", icon: Heart },
   { label: "边界", value: "18", icon: ShieldCheck },
   { label: "对话风格", value: "21", icon: MessageCircle },
   { label: "关系目标", value: "13", icon: Star },
+]
+
+const sourceConversation = [
+  {
+    name: "你",
+    avatar: "我",
+    role: "user",
+    message: "我想回她，但不知道怎么说才不会显得太紧张。",
+  },
+  {
+    name: "星野 Luna",
+    avatar: "L",
+    role: "agent",
+    message: "先不用把情绪解释得太完整，可以只回应一个轻松的点，让对话继续自然流动。",
+  },
+  {
+    name: "你",
+    avatar: "我",
+    role: "user",
+    message: "我希望你直接告诉我怎么说，但语气不要太硬。",
+  },
+  {
+    name: "星野 Luna",
+    avatar: "L",
+    role: "agent",
+    message: "明白。我会给你清楚的建议，同时保留温柔和分寸，不让对方觉得被推进。",
+  },
+  {
+    name: "你",
+    avatar: "我",
+    role: "user",
+    message: "对，我不喜欢那种特别套路、像在控制别人的话术。",
+  },
+  {
+    name: "星野 Luna",
+    avatar: "L",
+    role: "agent",
+    message: "那我会把建议收束在真实表达上：短一点、清楚一点，但不给对方压力。",
+  },
 ]
 
 export default function MemoriesPage() {
@@ -93,50 +154,66 @@ export default function MemoriesPage() {
 
   return (
     <DashboardShell title="记忆库">
-      <main className="min-h-[calc(100vh-4rem)] bg-[radial-gradient(circle_at_top_left,rgba(99,102,241,0.08),transparent_32rem),linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)]">
-        <section className="border-b bg-white/90 px-5 py-5 backdrop-blur lg:px-8">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-            <div className="flex min-w-0 gap-4">
-              <span className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-violet-200 bg-violet-50 text-violet-700">
-                <Brain className="size-6" />
-              </span>
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">
-                  Memory library
-                </p>
-                <h1 className="mt-1 text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl">
-                  管理 Agent 伴侣可以使用的长期记忆
-                </h1>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-                  查看、确认、编辑和删除偏好、边界、关系目标与聊天风格，让长期陪伴保持可控。
-                </p>
-              </div>
-            </div>
+      <main className="min-h-[calc(100vh-4rem)] bg-slate-50/70">
+        <section className="bg-white px-5 pt-5 lg:px-8">
+          <div className="border-b border-slate-200 pb-5">
+            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-end">
+              <div className="flex min-w-0 gap-4">
+                <div className="hidden size-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-500 sm:flex">
+                  <Brain className="size-5" />
+                </div>
 
-            <div className="grid grid-cols-3 overflow-hidden rounded-2xl border border-slate-200 bg-white xl:min-w-96">
-              {memoryStats.map((item, index) => {
-                const Icon = item.icon
-
-                return (
-                  <div
-                    className={index === 2 ? "px-3 py-2.5" : "border-r border-slate-200 px-3 py-2.5"}
-                    key={item.label}
-                  >
-                    <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                      <Icon className="size-3.5 text-slate-500" />
-                      {item.label}
-                    </p>
-                    <p className="mt-1 text-sm font-semibold text-slate-950">{item.value}</p>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-[11px] font-medium text-slate-400">
+                    <span>记忆库</span>
+                    <span className="h-px w-8 bg-slate-200" />
+                    <span>Memory library</span>
                   </div>
-                )
-              })}
+                  <p className="mt-2 max-w-xl text-[15px] font-normal leading-7 text-slate-600">
+                    管理 Agent 伴侣可以使用的长期记忆，让偏好、边界和关系目标保持清晰可控。
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-slate-100 px-2.5 text-[11px] font-medium text-slate-500">
+                      <BadgeCheck className="size-3.5" />
+                      用户确认
+                    </span>
+                    <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-slate-100 px-2.5 text-[11px] font-medium text-slate-500">
+                      <Bot className="size-3.5" />
+                      伴侣共享
+                    </span>
+                    <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-slate-100 px-2.5 text-[11px] font-medium text-slate-500">
+                      <ShieldCheck className="size-3.5" />
+                      边界可控
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 border-t border-slate-200 pt-3 lg:border-t-0 lg:pt-0">
+                {memoryStats.map((item, index) => {
+                  const Icon = item.icon
+
+                  return (
+                    <div
+                      className={index === 0 ? "pr-4" : "border-l border-slate-200 px-4 last:pr-0"}
+                      key={item.label}
+                    >
+                      <div className="mb-2 flex size-6 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+                        <Icon className="size-3.5" />
+                      </div>
+                      <p className="text-[10px] font-medium text-slate-400">{item.label}</p>
+                      <p className="mt-1 text-sm font-medium leading-none text-slate-600">{item.value}</p>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           </div>
         </section>
 
         <section className="px-5 py-5 lg:px-8">
-          <div className="mb-5 flex flex-col gap-3 lg:h-10 lg:flex-row lg:items-center">
-            <label className="flex h-9 min-w-0 items-center gap-2 rounded-xl bg-white px-2.5 ring-1 ring-inset ring-slate-200 transition-colors focus-within:bg-slate-50/70 lg:w-80">
+          <div className="flex flex-col gap-1.5 lg:h-10 lg:flex-row lg:items-center">
+            <label className="flex h-9 min-w-0 items-center gap-2 rounded-xl bg-slate-50/80 px-2.5 ring-1 ring-inset ring-slate-200/70 transition-colors focus-within:bg-white lg:w-80">
               <span className="flex size-6 shrink-0 items-center justify-center rounded-md text-slate-500">
                 <Search className="size-3.5" />
               </span>
@@ -157,90 +234,127 @@ export default function MemoriesPage() {
                       ? "relative flex h-8 shrink-0 items-center rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-950 after:absolute after:inset-x-3 after:bottom-1 after:h-px after:bg-slate-400"
                       : "flex h-8 shrink-0 items-center rounded-lg px-3 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
                   }
-                  key={filter}
+                  key={filter.label}
+                  title={filter.meta}
                   type="button"
                 >
-                  {filter}
+                  {filter.label}
                 </button>
               ))}
             </div>
 
             <button
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
               type="button"
             >
-              <Filter className="size-3.5" />
+              <Filter className="size-4" />
               高级筛选
             </button>
           </div>
 
-          <div className="grid gap-5 xl:grid-cols-[minmax(360px,0.72fr)_minmax(0,1fr)_21rem]">
-            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-              <div className="border-b border-slate-200 bg-slate-50/70 px-4 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-slate-950">记忆列表</p>
-                  <span className="text-xs font-medium text-muted-foreground">{memories.length} 条</span>
-                </div>
-              </div>
-
-              <div className="divide-y divide-slate-200">
+          <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
+            <section className="overflow-hidden rounded-2xl">
+              <div className="grid auto-rows-[86px] grid-flow-dense grid-cols-1 gap-1 md:grid-cols-2 2xl:grid-cols-4">
                 {memories.map((memory, index) => (
                   <article
-                    className={
-                      index === 0
-                        ? "relative bg-slate-100/80 px-4 py-4"
-                        : "bg-white px-4 py-4 transition-colors hover:bg-slate-50"
-                    }
+                    className={`${memory.spanClassName} relative flex min-h-0 flex-col bg-white p-4 transition-colors hover:bg-slate-50`}
                     key={memory.title}
                   >
-                    {index === 0 ? <span className="absolute inset-y-0 left-0 w-1 bg-slate-950" /> : null}
+                    {index === 0 ? <span className="absolute inset-x-4 top-0 h-px bg-slate-900" /> : null}
 
-                    <div className="flex items-start gap-3">
-                      <span
-                        className={
-                          index === 0
-                            ? "flex size-10 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white"
-                            : "flex size-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600"
-                        }
-                      >
-                        <Brain className="size-4" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <h2 className="truncate text-sm font-semibold text-slate-950">{memory.title}</h2>
-                          {memory.pinned ? <Star className="size-3.5 shrink-0 fill-amber-400 text-amber-400" /> : null}
-                          <span className="ml-auto shrink-0 text-[11px] font-medium text-muted-foreground">
-                            {memory.updatedAt}
-                          </span>
-                        </div>
-                        <p className="mt-1 line-clamp-2 text-sm leading-6 text-slate-600">{memory.content}</p>
-                        <div className="mt-3 flex flex-wrap gap-1.5">
-                          <span className="inline-flex h-6 items-center rounded-full border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-600">
-                            {memory.type}
-                          </span>
-                          <span className="inline-flex h-6 items-center rounded-full border border-blue-200 bg-blue-50 px-2 text-[11px] font-medium text-blue-700">
-                            {memory.scope}
-                          </span>
-                          <span className="inline-flex h-6 items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 text-[11px] font-medium text-emerald-700">
-                            置信度 {memory.confidence}
-                          </span>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span
+                          className={
+                            index === 0
+                              ? "flex size-8 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white"
+                              : "flex size-8 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500"
+                          }
+                        >
+                          <Brain className="size-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-950">{memory.title}</p>
+                          <p className="mt-0.5 truncate text-[11px] font-medium text-slate-400">
+                            {memory.source} · {memory.updatedAt}
+                          </p>
                         </div>
                       </div>
+                      {memory.pinned ? <Star className="size-3.5 shrink-0 fill-amber-400 text-amber-400" /> : null}
+                    </div>
+
+                    <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">{memory.content}</p>
+
+                    <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-3">
+                      <span className="inline-flex h-6 items-center rounded-full bg-slate-100 px-2 text-[11px] font-medium text-slate-600">
+                        {memory.type}
+                      </span>
+                      <span className="inline-flex h-6 items-center rounded-full bg-slate-100 px-2 text-[11px] font-medium text-slate-500">
+                        {memory.scope}
+                      </span>
+                      <span className="ml-auto inline-flex h-6 items-center rounded-full bg-slate-950 px-2 text-[11px] font-medium text-white">
+                        {memory.confidence}
+                      </span>
                     </div>
                   </article>
                 ))}
+
+                <article className="row-span-6 flex min-h-0 flex-col bg-white p-4 md:col-span-2 2xl:col-span-2">
+                  <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                    <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                      <MessageCircle className="size-4 text-slate-500" />
+                      来源片段
+                    </p>
+                    <span className="text-[11px] font-medium text-slate-400">Conversation source</span>
+                  </div>
+
+                  <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-hidden">
+                    {sourceConversation.map((message, index) => {
+                      const isUser = message.role === "user"
+
+                      return (
+                        <div
+                          className={isUser ? "flex flex-row-reverse items-end gap-2.5" : "flex items-end gap-2.5"}
+                          key={`${message.name}-${index}`}
+                        >
+                          <span
+                            className={
+                              isUser
+                                ? "flex size-8 shrink-0 items-center justify-center rounded-full bg-slate-950 text-xs font-semibold text-white"
+                                : "flex size-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600"
+                            }
+                          >
+                            {message.avatar}
+                          </span>
+                          <div className={isUser ? "max-w-[82%] text-right" : "max-w-[82%]"}>
+                            <p className="mb-1 px-1 text-[11px] font-medium text-slate-400">{message.name}</p>
+                            <p
+                              className={
+                                isUser
+                                  ? "rounded-2xl rounded-br-md bg-slate-950 px-3 py-2.5 text-left text-sm leading-6 text-white"
+                                  : "rounded-2xl rounded-bl-md bg-slate-100 px-3 py-2.5 text-sm leading-6 text-slate-700"
+                              }
+                            >
+                              {message.message}
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </article>
               </div>
             </section>
 
-            <section className="flex flex-col gap-5">
-              <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
+            <aside className="grid gap-5">
+              <section className="rounded-2xl bg-white p-4">
+                <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-3">
                   <div>
                     <p className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                      <Sparkles className="size-4 text-violet-600" />
-                      记忆详情
+                      <Sparkles className="size-4 text-slate-500" />
+                      当前记忆
                     </p>
-                    <p className="mt-1 text-xs text-muted-foreground">当前选中的长期记忆</p>
+                    <p className="mt-1 text-xs text-slate-400">Selected memory</p>
                   </div>
                   <button
                     aria-label="更多记忆操作"
@@ -251,13 +365,15 @@ export default function MemoriesPage() {
                   </button>
                 </div>
 
-                <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{selectedMemory.type}</p>
-                  <h2 className="mt-2 text-lg font-semibold tracking-tight text-slate-950">{selectedMemory.title}</h2>
+                <div className="py-4">
+                  <p className="text-[11px] font-medium text-slate-400">{selectedMemory.type}</p>
+                  <h2 className="mt-2 text-base font-semibold tracking-tight text-slate-950">
+                    {selectedMemory.title}
+                  </h2>
                   <p className="mt-3 text-sm leading-7 text-slate-600">{selectedMemory.content}</p>
                 </div>
 
-                <div className="mt-5 grid grid-cols-3 overflow-hidden rounded-2xl border border-slate-200">
+                <div className="grid grid-cols-3 border-y border-slate-200">
                   {selectedMemoryMeta.map((item, index) => {
                     const Icon = item.icon
 
@@ -266,33 +382,33 @@ export default function MemoriesPage() {
                         className={index === 2 ? "px-3 py-3" : "border-r border-slate-200 px-3 py-3"}
                         key={item.label}
                       >
-                        <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                          <Icon className="size-3.5 text-slate-500" />
+                        <p className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400">
+                          <Icon className="size-3.5" />
                           {item.label}
                         </p>
-                        <p className="mt-1 truncate text-sm font-semibold text-slate-950">{item.value}</p>
+                        <p className="mt-1 truncate text-sm font-medium text-slate-700">{item.value}</p>
                       </div>
                     )
                   })}
                 </div>
 
-                <div className="mt-5 flex flex-wrap gap-2">
+                <div className="mt-4 flex flex-wrap gap-2">
                   <button
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-slate-950 px-4 text-sm font-medium text-white transition-colors hover:bg-slate-800"
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-slate-950 px-4 text-sm font-medium text-white hover:bg-slate-800"
                     type="button"
                   >
                     <CheckCircle2 className="size-4" />
-                    确认记忆
+                    确认
                   </button>
                   <button
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
                     type="button"
                   >
                     <LockKeyhole className="size-4" />
-                    限制范围
+                    范围
                   </button>
                   <button
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 text-sm font-medium text-red-700 transition-colors hover:bg-red-100"
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 text-sm font-medium text-red-700 hover:bg-red-100"
                     type="button"
                   >
                     <Trash2 className="size-4" />
@@ -301,34 +417,18 @@ export default function MemoriesPage() {
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <div className="mb-4 flex items-center justify-between border-b border-slate-200 pb-4">
+              <section className="rounded-2xl bg-white p-4">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
                   <p className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                    <MessageCircle className="size-4 text-blue-600" />
-                    来源片段
+                    <Clock3 className="size-4 text-slate-500" />
+                    待确认记忆
                   </p>
-                  <span className="text-[11px] font-medium text-muted-foreground">Conversation source</span>
+                  <span className="text-[11px] font-medium text-slate-400">{pendingMemories.length} 条</span>
                 </div>
-                <div className="space-y-3">
-                  <p className="rounded-2xl rounded-tl-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700">
-                    我希望你直接告诉我怎么说，但语气不要太硬。
-                  </p>
-                  <p className="ml-auto max-w-[82%] rounded-2xl rounded-tr-md border border-slate-950 bg-slate-950 px-4 py-3 text-sm leading-6 text-white">
-                    明白，我会给你清楚的建议，同时保留温柔和分寸。
-                  </p>
-                </div>
-              </section>
-            </section>
 
-            <aside className="flex flex-col gap-5">
-              <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <p className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                  <Clock3 className="size-4 text-blue-600" />
-                  待确认记忆
-                </p>
-                <div className="mt-4 space-y-3">
+                <div className="mt-4 grid gap-2">
                   {pendingMemories.map((memory) => (
-                    <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-3" key={memory}>
+                    <div className="border-t border-slate-100 py-3 first:border-t-0 first:pt-0" key={memory}>
                       <p className="text-sm leading-6 text-slate-600">{memory}</p>
                       <div className="mt-2 flex gap-2">
                         <button className="h-7 rounded-full bg-slate-950 px-3 text-xs font-medium text-white" type="button">
@@ -343,9 +443,9 @@ export default function MemoriesPage() {
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-slate-200 bg-white p-5">
+              <section className="rounded-2xl border border-slate-200 bg-white p-4">
                 <p className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                  <ShieldCheck className="size-4 text-emerald-600" />
+                  <ShieldCheck className="size-4 text-slate-500" />
                   分类概览
                 </p>
                 <div className="mt-4 grid gap-2">
@@ -353,10 +453,10 @@ export default function MemoriesPage() {
                     const Icon = category.icon
 
                     return (
-                      <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-3" key={category.label}>
+                      <div className="flex items-center gap-3 border-t border-slate-100 py-2 first:border-t-0 first:pt-0" key={category.label}>
                         <Icon className="size-4 text-slate-500" />
                         <span className="min-w-0 flex-1 text-sm font-medium text-slate-700">{category.label}</span>
-                        <span className="text-sm font-semibold text-slate-950">{category.value}</span>
+                        <span className="text-sm font-medium text-slate-500">{category.value}</span>
                       </div>
                     )
                   })}

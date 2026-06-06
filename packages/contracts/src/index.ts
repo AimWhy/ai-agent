@@ -43,6 +43,16 @@ export type {
   WebAuthSession,
 } from './auth/web-password-login.contract'
 export {
+  WebGithubAuthUrlResponseSchema,
+  WebGithubTicketLoginRequestSchema,
+  WebGithubTicketLoginResponseSchema,
+} from './auth/web-github-login.contract'
+export type {
+  WebGithubAuthUrlResponse,
+  WebGithubTicketLoginRequest,
+  WebGithubTicketLoginResponse,
+} from './auth/web-github-login.contract'
+export {
   WebTokenRefreshRequestSchema,
   WebTokenRefreshResponseSchema,
 } from './auth/web-token-refresh.contract'

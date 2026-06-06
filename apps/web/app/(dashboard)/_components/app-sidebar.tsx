@@ -2,8 +2,9 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Bot, Brain, Command, Compass, Heart, Inbox, Sparkles } from "lucide-react"
+import { Bot, Brain, Command, Compass, Heart, Inbox, Sparkles, UserRound } from "lucide-react"
 
+import { useWebDashboardContext } from "@/components/web-dashboard-guard"
 import { NavUser } from "./nav-user"
 import {
   Sidebar,
@@ -18,14 +19,9 @@ import {
 } from "@repo/ui/sidebar"
 
 const data = {
-  user: {
-    name: "shadcn",
-    email: "m@example.com",
-    avatar: "/avatars/shadcn.jpg",
-  },
   navMain: [
     {
-      title: "Inbox",
+      title: "聊天",
       url: "/",
       icon: Inbox,
     },
@@ -54,11 +50,17 @@ const data = {
       url: "/subscription-plans",
       icon: Sparkles,
     },
+    {
+      title: "个人中心",
+      url: "/profile",
+      icon: UserRound,
+    },
   ],
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
+  const { profile } = useWebDashboardContext()
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -114,7 +116,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={data.user} />
+        <NavUser
+          user={{
+            name: profile.name,
+            email: profile.email,
+            avatar: null,
+          }}
+        />
       </SidebarFooter>
     </Sidebar>
   )

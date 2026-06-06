@@ -6,6 +6,8 @@ import {
   applications,
   authSessions,
   defaultAvatarVersions,
+  oauthAccounts,
+  oauthLoginTickets,
   passwordCredentials,
   refreshTokens,
   roles,
@@ -24,6 +26,14 @@ import type {
 } from './types'
 
 export async function isPasswordLoginEnabledForApp(db: ApiDb, appCode: 'admin' | 'web'): Promise<boolean> {
+  return isAuthMethodEnabledForApp(db, appCode, 'password')
+}
+
+export async function isAuthMethodEnabledForApp(
+  db: ApiDb,
+  appCode: 'admin' | 'web',
+  provider: 'password' | 'github' | 'google',
+): Promise<boolean> {
   const row = await db
     .select({ enabled: applicationAuthMethods.enabled })
     .from(applicationAuthMethods)
@@ -32,13 +42,17 @@ export async function isPasswordLoginEnabledForApp(db: ApiDb, appCode: 'admin' |
       and(
         eq(applications.code, appCode),
         eq(applications.status, 'active'),
-        eq(applicationAuthMethods.provider, 'password'),
+        eq(applicationAuthMethods.provider, provider),
       ),
     )
     .limit(1)
     .get()
 
   return row?.enabled === 1
+}
+
+export async function isGithubLoginEnabledForWeb(db: ApiDb): Promise<boolean> {
+  return isAuthMethodEnabledForApp(db, 'web', 'github')
 }
 
 export async function isPasswordLoginEnabledForAdmin(db: ApiDb): Promise<boolean> {
@@ -119,6 +133,240 @@ export async function getWebRolesForUser(
   userId: string,
 ): Promise<string[]> {
   return getRolesForUserByApp(db, userId, 'web')
+}
+
+export async function findWebUserByGithubAccount(
+  db: ApiDb,
+  providerUserId: string,
+): Promise<{
+  userId: string
+  userStatus: 'active' | 'suspended' | 'deleted'
+} | null> {
+  const row = await db
+    .select({
+      userId: users.id,
+      userStatus: users.status,
+    })
+    .from(oauthAccounts)
+    .innerJoin(users, eq(users.id, oauthAccounts.userId))
+    .where(
+      and(
+        eq(oauthAccounts.provider, 'github'),
+        eq(oauthAccounts.providerUserId, providerUserId),
+      ),
+    )
+    .limit(1)
+    .get()
+
+  return row
+    ? {
+        ...row,
+        userStatus: row.userStatus as 'active' | 'suspended' | 'deleted',
+      }
+    : null
+}
+
+export async function findUserByNormalizedEmail(
+  db: ApiDb,
+  normalizedEmail: string,
+): Promise<{
+  userId: string
+  emailId: string
+  userStatus: 'active' | 'suspended' | 'deleted'
+} | null> {
+  const row = await db
+    .select({
+      userId: users.id,
+      emailId: userEmails.id,
+      userStatus: users.status,
+    })
+    .from(userEmails)
+    .innerJoin(users, eq(users.id, userEmails.userId))
+    .where(eq(userEmails.normalizedEmail, normalizedEmail))
+    .limit(1)
+    .get()
+
+  return row
+    ? {
+        ...row,
+        userStatus: row.userStatus as 'active' | 'suspended' | 'deleted',
+      }
+    : null
+}
+
+export async function findPrimaryEmailIdByUserId(
+  db: ApiDb,
+  userId: string,
+): Promise<string | null> {
+  const row = await db
+    .select({ id: userEmails.id })
+    .from(userEmails)
+    .where(
+      and(
+        eq(userEmails.userId, userId),
+        eq(userEmails.isPrimary, 1),
+      ),
+    )
+    .limit(1)
+    .get()
+
+  return row?.id ?? null
+}
+
+export async function createGithubWebUser(params: {
+  db: ApiDb
+  userId: string
+  emailId: string
+  oauthAccountId: string
+  roleBindingId: string
+  webRoleId: string
+  email: string
+  normalizedEmail: string
+  displayName: string
+  providerUserId: string
+  providerLogin: string | null
+  nowMs: number
+}): Promise<void> {
+  await params.db.batch([
+    params.db.insert(users).values({
+      id: params.userId,
+      status: 'active',
+      displayName: params.displayName,
+      primaryEmailId: params.emailId,
+      avatarKey: null,
+      createdAtMs: params.nowMs,
+      updatedAtMs: params.nowMs,
+      lastLoginAtMs: null,
+    }),
+    params.db.insert(userEmails).values({
+      id: params.emailId,
+      userId: params.userId,
+      email: params.email,
+      normalizedEmail: params.normalizedEmail,
+      isPrimary: 1,
+      isVerified: 1,
+      verifiedAtMs: params.nowMs,
+      source: 'github',
+      createdAtMs: params.nowMs,
+      updatedAtMs: params.nowMs,
+    }),
+    params.db.insert(oauthAccounts).values({
+      id: params.oauthAccountId,
+      userId: params.userId,
+      provider: 'github',
+      providerUserId: params.providerUserId,
+      providerLogin: params.providerLogin,
+      emailId: params.emailId,
+      createdAtMs: params.nowMs,
+      updatedAtMs: params.nowMs,
+    }),
+    params.db.insert(userRoleBindings).values({
+      id: params.roleBindingId,
+      userId: params.userId,
+      roleId: params.webRoleId,
+      status: 'active',
+      grantedAtMs: params.nowMs,
+      revokedAtMs: null,
+    }),
+  ])
+}
+
+export async function linkGithubAccountToUser(params: {
+  db: ApiDb
+  oauthAccountId: string
+  userId: string
+  emailId: string | null
+  providerUserId: string
+  providerLogin: string | null
+  nowMs: number
+}): Promise<void> {
+  await params.db.insert(oauthAccounts).values({
+    id: params.oauthAccountId,
+    userId: params.userId,
+    provider: 'github',
+    providerUserId: params.providerUserId,
+    providerLogin: params.providerLogin,
+    emailId: params.emailId,
+    createdAtMs: params.nowMs,
+    updatedAtMs: params.nowMs,
+  })
+}
+
+export async function ensureUserHasRole(params: {
+  db: ApiDb
+  bindingId: string
+  userId: string
+  roleId: string
+  nowMs: number
+}): Promise<void> {
+  await params.db.insert(userRoleBindings).values({
+    id: params.bindingId,
+    userId: params.userId,
+    roleId: params.roleId,
+    status: 'active',
+    grantedAtMs: params.nowMs,
+    revokedAtMs: null,
+  }).onConflictDoUpdate({
+    target: [userRoleBindings.userId, userRoleBindings.roleId],
+    set: {
+      status: 'active',
+      revokedAtMs: null,
+    },
+  })
+}
+
+export async function insertOauthLoginTicket(params: {
+  db: ApiDb
+  id: string
+  ticketHash: string
+  userId: string
+  applicationId: string
+  provider: 'github' | 'google'
+  createdAtMs: number
+  expiresAtMs: number
+}): Promise<void> {
+  await params.db.insert(oauthLoginTickets).values({
+    id: params.id,
+    ticketHash: params.ticketHash,
+    userId: params.userId,
+    applicationId: params.applicationId,
+    provider: params.provider,
+    createdAtMs: params.createdAtMs,
+    expiresAtMs: params.expiresAtMs,
+    usedAtMs: null,
+  })
+}
+
+export async function consumeOauthLoginTicket(params: {
+  db: ApiDb
+  ticketHash: string
+  provider: 'github' | 'google'
+  nowMs: number
+}): Promise<{
+  ticketId: string
+  userId: string
+  applicationId: string
+  expiresAtMs: number
+} | null> {
+  const row = await params.db
+    .update(oauthLoginTickets)
+    .set({ usedAtMs: params.nowMs })
+    .where(
+      and(
+        eq(oauthLoginTickets.ticketHash, params.ticketHash),
+        eq(oauthLoginTickets.provider, params.provider),
+        isNull(oauthLoginTickets.usedAtMs),
+        sql`${oauthLoginTickets.expiresAtMs} > ${params.nowMs}`,
+      ),
+    )
+    .returning({
+      ticketId: oauthLoginTickets.id,
+      userId: oauthLoginTickets.userId,
+      applicationId: oauthLoginTickets.applicationId,
+      expiresAtMs: oauthLoginTickets.expiresAtMs,
+    })
+
+  return row[0] ?? null
 }
 
 export async function getApplicationIdByCode(db: ApiDb, appCode: 'admin' | 'web'): Promise<string> {

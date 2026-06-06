@@ -4,8 +4,6 @@ import {
   CheckCircle2,
   Clock3,
   Heart,
-  Mail,
-  MailOpen,
   MessageCircle,
   MoreHorizontal,
   Search,
@@ -18,157 +16,187 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 
-const inboxMails = [
+const chatConversations = [
   {
     name: "William Smith",
-    sender: "William Smith",
-    email: "williamsmith@example.com",
-    senderEmail: "williamsmith@example.com",
-    subject: "Meeting Tomorrow",
-    date: "09:34 AM",
-    priority: "High",
-    category: "Work",
+    handle: "@william",
+    headline: "明天想约你一起喝咖啡",
+    lastActive: "09:34 AM",
+    status: "在线",
+    relationship: "刚认识",
+    topic: "咖啡 / 城市散步",
+    chemistry: "92%",
+    chemistryLabel: "高匹配",
+    chemistryLevel: "High",
+    rhythm: "轻松推进",
     unread: true,
     pinned: true,
-    teaser:
-      "Hi team, just a reminder about our meeting tomorrow at 10 AM.\nPlease come prepared with your project updates.",
+    profileNote:
+      "他回复很稳定，喜欢用轻松的方式推进话题。上次聊到周末新开的咖啡店，可以从这个共同点自然延续。",
   },
   {
     name: "Alice Smith",
-    sender: "Alice Smith",
-    email: "alicesmith@example.com",
-    senderEmail: "alicesmith@example.com",
-    subject: "Re: Project Update",
-    date: "Yesterday",
-    priority: "Normal",
-    category: "Project",
+    handle: "@alice",
+    headline: "分享了最近喜欢的一部电影",
+    lastActive: "Yesterday",
+    status: "在线",
+    relationship: "熟悉中",
+    topic: "电影 / 情绪共鸣",
+    chemistry: "78%",
+    chemistryLabel: "自然",
+    chemistryLevel: "Normal",
+    rhythm: "慢慢熟悉",
     unread: true,
     pinned: false,
-    teaser:
-      "Thanks for the update. The progress looks great so far.\nLet's schedule a call to discuss the next steps.",
+    profileNote:
+      "她喜欢先聊感受再聊观点，适合用轻松好奇的方式接话，不要太快转成建议。",
   },
   {
     name: "Bob Johnson",
-    sender: "Bob Johnson",
-    email: "bobjohnson@example.com",
-    senderEmail: "bobjohnson@example.com",
-    subject: "Weekend Plans",
-    date: "2 days ago",
-    priority: "Low",
-    category: "Team",
+    handle: "@bob",
+    headline: "约你周末一起户外走走",
+    lastActive: "2 days ago",
+    status: "离线",
+    relationship: "朋友感",
+    topic: "徒步 / 周末计划",
+    chemistry: "64%",
+    chemistryLabel: "低压",
+    chemistryLevel: "Low",
+    rhythm: "低压邀约",
     unread: false,
     pinned: false,
-    teaser:
-      "Hey everyone! I'm thinking of organizing a team outing this weekend.\nWould you be interested in a hiking trip or a beach day?",
+    profileNote:
+      "他表达直接但没有压迫感，适合给出明确偏好，再留一个轻松选择。",
   },
   {
     name: "Emily Davis",
-    sender: "Emily Davis",
-    email: "emilydavis@example.com",
-    senderEmail: "emilydavis@example.com",
-    subject: "Re: Question about Budget",
-    date: "2 days ago",
-    priority: "High",
-    category: "Finance",
+    handle: "@emily",
+    headline: "问你最近是不是有点忙",
+    lastActive: "2 days ago",
+    status: "在线",
+    relationship: "暧昧试探",
+    topic: "日常关心 / 边界感",
+    chemistry: "88%",
+    chemistryLabel: "高匹配",
+    chemistryLevel: "High",
+    rhythm: "温柔试探",
     unread: true,
     pinned: false,
-    teaser:
-      "I've reviewed the budget numbers you sent over.\nCan we set up a quick call to discuss some potential adjustments?",
+    profileNote:
+      "她会主动关心，但也很在意对方是否舒服。回复可以真诚一点，同时不要解释过度。",
   },
   {
     name: "Michael Wilson",
-    sender: "Michael Wilson",
-    email: "michaelwilson@example.com",
-    senderEmail: "michaelwilson@example.com",
-    subject: "Important Announcement",
-    date: "1 week ago",
-    priority: "High",
-    category: "Company",
+    handle: "@michael",
+    headline: "发来一首你可能会喜欢的歌",
+    lastActive: "1 week ago",
+    status: "离线",
+    relationship: "有共同兴趣",
+    topic: "音乐 / 分享欲",
+    chemistry: "84%",
+    chemistryLabel: "高匹配",
+    chemistryLevel: "High",
+    rhythm: "兴趣延续",
     unread: false,
     pinned: true,
-    teaser:
-      "Please join us for an all-hands meeting this Friday at 3 PM.\nWe have some exciting news to share about the company's future.",
+    profileNote:
+      "他喜欢通过作品表达情绪，适合回应具体感受，再轻轻抛出自己的联想。",
   },
   {
     name: "Sarah Brown",
-    sender: "Sarah Brown",
-    email: "sarahbrown@example.com",
-    senderEmail: "sarahbrown@example.com",
-    subject: "Re: Feedback on Proposal",
-    date: "1 week ago",
-    priority: "Normal",
-    category: "Sales",
+    handle: "@sarah",
+    headline: "想继续聊上次那个展览",
+    lastActive: "1 week ago",
+    status: "离线",
+    relationship: "慢热",
+    topic: "展览 / 审美",
+    chemistry: "76%",
+    chemistryLabel: "自然",
+    chemistryLevel: "Normal",
+    rhythm: "细节回应",
     unread: false,
     pinned: false,
-    teaser:
-      "Thank you for sending over the proposal. I've reviewed it and have some thoughts.\nCould we schedule a meeting to discuss my feedback in detail?",
+    profileNote:
+      "她更吃细节和真诚，不适合太油的夸赞。可以从上次展览里的一个画面切入。",
   },
   {
     name: "David Lee",
-    sender: "David Lee",
-    email: "davidlee@example.com",
-    senderEmail: "davidlee@example.com",
-    subject: "New Project Idea",
-    date: "1 week ago",
-    priority: "Normal",
-    category: "Ideas",
+    handle: "@david",
+    headline: "提出一个很有意思的约会点子",
+    lastActive: "1 week ago",
+    status: "离线",
+    relationship: "轻松互动",
+    topic: "创意约会 / 城市探索",
+    chemistry: "73%",
+    chemistryLabel: "自然",
+    chemistryLevel: "Normal",
+    rhythm: "轻松提议",
     unread: false,
     pinned: false,
-    teaser:
-      "I've been brainstorming and came up with an interesting project concept.\nDo you have time this week to discuss its potential impact and feasibility?",
+    profileNote:
+      "他喜欢有画面感的计划，回复可以带一点玩笑，再给出一个具体时间窗口。",
   },
   {
     name: "Olivia Wilson",
-    sender: "Olivia Wilson",
-    email: "oliviawilson@example.com",
-    senderEmail: "oliviawilson@example.com",
-    subject: "Vacation Plans",
-    date: "1 week ago",
-    priority: "Low",
-    category: "HR",
+    handle: "@olivia",
+    headline: "聊到下个月想去海边",
+    lastActive: "1 week ago",
+    status: "离线",
+    relationship: "低压陪伴",
+    topic: "旅行 / 放松",
+    chemistry: "61%",
+    chemistryLabel: "低压",
+    chemistryLevel: "Low",
+    rhythm: "慢节奏",
     unread: false,
     pinned: false,
-    teaser:
-      "Just a heads up that I'll be taking a two-week vacation next month.\nI'll make sure all my projects are up to date before I leave.",
+    profileNote:
+      "她最近更想放松，不适合密集追问。可以回应向往感，再留一个开放话题。",
   },
   {
     name: "James Martin",
-    sender: "James Martin",
-    email: "jamesmartin@example.com",
-    senderEmail: "jamesmartin@example.com",
-    subject: "Re: Conference Registration",
-    date: "1 week ago",
-    priority: "Normal",
-    category: "Events",
+    handle: "@james",
+    headline: "问你最近有没有参加什么活动",
+    lastActive: "1 week ago",
+    status: "离线",
+    relationship: "共同社交圈",
+    topic: "活动 / 城市生活",
+    chemistry: "70%",
+    chemistryLabel: "自然",
+    chemistryLevel: "Normal",
+    rhythm: "自然寒暄",
     unread: false,
     pinned: false,
-    teaser:
-      "I've completed the registration for the upcoming tech conference.\nLet me know if you need any additional information from my end.",
+    profileNote:
+      "他适合从具体活动聊起，最好别只回复一句泛泛的寒暄。",
   },
   {
     name: "Sophia White",
-    sender: "Sophia White",
-    email: "sophiawhite@example.com",
-    senderEmail: "sophiawhite@example.com",
-    subject: "Team Dinner",
-    date: "1 week ago",
-    priority: "Low",
-    category: "Team",
+    handle: "@sophia",
+    headline: "想约一顿轻松的晚餐",
+    lastActive: "1 week ago",
+    status: "离线",
+    relationship: "朋友转暧昧",
+    topic: "晚餐 / 关系推进",
+    chemistry: "66%",
+    chemistryLabel: "低压",
+    chemistryLevel: "Low",
+    rhythm: "自然推进",
     unread: false,
     pinned: false,
-    teaser:
-      "To celebrate our recent project success, I'd like to organize a team dinner.\nAre you available next Friday evening? Please let me know your preferences.",
+    profileNote:
+      "她主动但节奏不快，适合给出明确但轻松的回应，让邀约听起来像自然发生。",
   },
 ]
 
-const selectedMail = inboxMails[0]!
-const unreadCount = inboxMails.filter((mail) => mail.unread).length
-const crushCount = inboxMails.filter((mail) => mail.priority === "High").length
-const activeChatCount = inboxMails.filter(
-  (mail) => mail.unread || mail.priority === "High" || mail.pinned,
+const selectedConversation = chatConversations[0]!
+const unreadCount = chatConversations.filter((conversation) => conversation.unread).length
+const crushCount = chatConversations.filter((conversation) => conversation.chemistryLevel === "High").length
+const activeChatCount = chatConversations.filter(
+  (conversation) => conversation.unread || conversation.chemistryLevel === "High" || conversation.pinned,
 ).length
 
-type InboxMail = (typeof inboxMails)[number]
+type ChatConversation = (typeof chatConversations)[number]
 
 function getInitials(name: string) {
   return name
@@ -179,12 +207,12 @@ function getInitials(name: string) {
     .toUpperCase()
 }
 
-function priorityClassName(priority: InboxMail["priority"]) {
-  if (priority === "High") {
-    return "border-red-200 bg-red-50 text-red-700"
+function chemistryClassName(level: ChatConversation["chemistryLevel"]) {
+  if (level === "High") {
+    return "border-rose-200 bg-rose-50 text-rose-700"
   }
 
-  if (priority === "Low") {
+  if (level === "Low") {
     return "border-emerald-200 bg-emerald-50 text-emerald-700"
   }
 
@@ -217,7 +245,7 @@ function InboxList() {
             </div>
           </div>
           <Button
-            aria-label="More inbox actions"
+            aria-label="更多聊天操作"
             className="rounded-full"
             size="icon-sm"
             variant="ghost"
@@ -283,7 +311,7 @@ function InboxList() {
             <Search className="size-3.5" />
           </span>
           <Input
-            aria-label="Search inbox"
+            aria-label="搜索聊天对象"
             className="h-9 border-0 px-0 shadow-none focus-visible:ring-0"
             placeholder="搜索昵称、兴趣或聊天记录"
           />
@@ -318,14 +346,14 @@ function InboxList() {
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <div className="flex items-center justify-between border-b px-4 py-2.5 text-xs font-medium text-muted-foreground sm:px-5">
           <span>最近聊天</span>
-          <span>{inboxMails.length} 位联系人</span>
+          <span>{chatConversations.length} 位联系人</span>
         </div>
         <div className="divide-y divide-slate-200">
-          {inboxMails.map((mail, index) => (
+          {chatConversations.map((conversation, index) => (
             <a
               aria-current={index === 0 ? "page" : undefined}
               href="#"
-              key={mail.email}
+              key={conversation.handle}
               className={cn(
                 "group relative flex gap-3 px-4 py-3.5 text-sm transition-colors sm:px-5",
                 "focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-400",
@@ -346,11 +374,11 @@ function InboxList() {
                   "relative flex size-10 shrink-0 items-center justify-center rounded-lg text-xs font-semibold",
                   index === 0
                     ? "bg-slate-950 text-white"
-                    : "bg-slate-100 text-slate-700 group-hover:bg-slate-200",
+                  : "bg-slate-100 text-slate-700 group-hover:bg-slate-200",
                 )}
               >
-                {getInitials(mail.name)}
-                {mail.unread ? (
+                {getInitials(conversation.name)}
+                {conversation.unread ? (
                   <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-white bg-blue-600" />
                 ) : null}
               </span>
@@ -360,50 +388,51 @@ function InboxList() {
                   <span
                     className={cn(
                       "truncate font-semibold",
-                      index === 0 || mail.unread ? "text-slate-950" : "text-slate-700",
+                      index === 0 || conversation.unread ? "text-slate-950" : "text-slate-700",
                     )}
                   >
-                    {mail.name}
+                    {conversation.name}
                   </span>
-                  {mail.pinned ? (
+                  {conversation.pinned ? (
                     <Star className="size-3.5 shrink-0 fill-amber-400 text-amber-400" />
                   ) : null}
                   <span className="ml-auto shrink-0 text-[11px] font-medium text-muted-foreground">
-                    {mail.date}
+                    {conversation.lastActive}
                   </span>
                 </div>
 
                 <div className="mt-1 flex min-w-0 items-center gap-2">
-                  {mail.unread ? (
-                    <Mail className="size-3.5 shrink-0 text-blue-600" />
-                  ) : (
-                    <MailOpen className="size-3.5 shrink-0 text-muted-foreground" />
-                  )}
+                  <MessageCircle
+                    className={cn(
+                      "size-3.5 shrink-0",
+                      conversation.unread ? "text-blue-600" : "text-muted-foreground",
+                    )}
+                  />
                   <span
                     className={cn(
                       "truncate font-medium",
                       index === 0 ? "text-slate-950" : "text-slate-900",
                     )}
                   >
-                    {mail.subject}
+                    {conversation.headline}
                   </span>
                 </div>
 
                 <p className="mt-1.5 line-clamp-2 text-xs leading-5 whitespace-break-spaces text-muted-foreground">
-                  {mail.teaser}
+                  {conversation.profileNote}
                 </p>
 
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">
                   <span
                     className={cn(
                       "inline-flex h-6 items-center rounded-full border px-2 text-[11px] font-medium",
-                      priorityClassName(mail.priority),
+                      chemistryClassName(conversation.chemistryLevel),
                     )}
                   >
-                    {mail.priority}
+                    {conversation.chemistryLabel}
                   </span>
                   <span className="inline-flex h-6 items-center rounded-full border border-slate-200 bg-slate-50 px-2 text-[11px] font-medium text-slate-600">
-                    {mail.category}
+                    {conversation.topic}
                   </span>
                   {index === 0 ? (
                     <span className="inline-flex h-6 items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 text-[11px] font-medium text-violet-700">
@@ -436,11 +465,11 @@ function InboxList() {
 
 export default function Page() {
   return (
-    <DashboardShell title="Inbox">
+    <DashboardShell title="聊天">
       <div className="flex h-[calc(100vh-4rem)] min-h-0 flex-col overflow-hidden bg-slate-50/70 lg:flex-row">
         <InboxList />
 
-        <InboxChat mail={selectedMail} />
+        <InboxChat conversation={selectedConversation} />
       </div>
     </DashboardShell>
   )

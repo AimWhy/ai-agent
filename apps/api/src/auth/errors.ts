@@ -10,10 +10,10 @@ export function authUnauthorizedError(message = 'Unauthorized'): AppError {
   )
 }
 
-export function authMethodDisabledError(): AppError {
+export function authMethodDisabledError(message = 'Authentication method is disabled'): AppError {
   return new AppError(
     BizCode.AUTH_FORBIDDEN,
-    'Admin password login is disabled',
+    message,
     403,
   )
 }

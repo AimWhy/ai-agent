@@ -12,11 +12,18 @@ export const InboxChatMessageSchema = z.object({
 
 export const InboxChatRequestSchema = z.object({
   messages: z.array(InboxChatMessageSchema).min(1).max(20),
-  mail: z.object({
-    subject: z.string().min(1).max(200),
-    sender: z.string().min(1).max(120),
-    senderEmail: z.string().email(),
-    teaser: z.string().min(1).max(2000),
+  conversation: z.object({
+    name: z.string().min(1).max(120),
+    handle: z.string().min(1).max(120),
+    headline: z.string().min(1).max(200),
+    lastActive: z.string().min(1).max(80),
+    status: z.string().min(1).max(80),
+    relationship: z.string().min(1).max(120),
+    topic: z.string().min(1).max(120),
+    chemistry: z.string().min(1).max(80),
+    chemistryLabel: z.string().min(1).max(80),
+    rhythm: z.string().min(1).max(80),
+    profileNote: z.string().min(1).max(2000),
   }),
 })
 

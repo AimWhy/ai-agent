@@ -229,6 +229,48 @@ export const refreshTokens = sqliteTable(
   ],
 )
 
+export const oauthAccounts = sqliteTable(
+  'oauth_accounts',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    providerUserId: text('provider_user_id').notNull(),
+    providerLogin: text('provider_login'),
+    emailId: text('email_id').references(() => userEmails.id, { onDelete: 'set null' }),
+    createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_oauth_accounts_provider_user_unique').on(table.provider, table.providerUserId),
+    index('idx_oauth_accounts_user_id').on(table.userId),
+  ],
+)
+
+export const oauthLoginTickets = sqliteTable(
+  'oauth_login_tickets',
+  {
+    id: text('id').primaryKey(),
+    ticketHash: text('ticket_hash').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    applicationId: text('application_id')
+      .notNull()
+      .references(() => applications.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    createdAtMs: integer('created_at_ms').notNull(),
+    expiresAtMs: integer('expires_at_ms').notNull(),
+    usedAtMs: integer('used_at_ms'),
+  },
+  (table) => [
+    uniqueIndex('idx_oauth_login_tickets_hash_unique').on(table.ticketHash),
+    index('idx_oauth_login_tickets_user_id').on(table.userId),
+  ],
+)
+
 export const schema = {
   users,
   userEmails,
@@ -239,6 +281,8 @@ export const schema = {
   userRoleBindings,
   authSessions,
   refreshTokens,
+  oauthAccounts,
+  oauthLoginTickets,
   defaultAvatarVersions,
   subscriptionPlans,
   userSubscriptionBindings,
