@@ -135,12 +135,22 @@ userRoute.get('/default-avatar/history', async (c) => {
 })
 
 userRoute.get('/avatar', async (c) => {
-  await requireAdminAccessToken(c)
+  const claims = await requireProfileAccessToken(c)
 
   const key = c.req.query('key')?.trim()
 
   if (!key) {
     throw new AppError(BizCode.COMMON_INVALID_REQUEST, 'Avatar key is required', 400)
+  }
+
+  const db = getDb(c.env.DB)
+
+  if (claims.app === 'web') {
+    const profile = await findUserProfileById(db, claims.sub)
+
+    if (!profile || profile.avatarKey !== key) {
+      throw new AppError(BizCode.AUTH_FORBIDDEN, 'Avatar access is forbidden', 403)
+    }
   }
 
   const object = await c.env.AVATAR_BUCKET.get(key)

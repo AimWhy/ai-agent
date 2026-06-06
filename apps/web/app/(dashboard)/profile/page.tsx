@@ -20,6 +20,7 @@ import {
 } from "lucide-react"
 import type { UserProfileResponse } from "@repo/contracts"
 
+import { UserAvatar } from "@/components/user-avatar"
 import { useWebDashboardContext } from "@/components/web-dashboard-guard"
 import { DashboardShell } from "../_components/dashboard-shell"
 
@@ -131,16 +132,9 @@ function formatRole(role: string) {
   return roleMap[role] ?? role.replaceAll("_", " ")
 }
 
-function getInitials(name: string, email: string) {
-  const base = name.trim() || email.trim()
-
-  return base.slice(0, 2).toUpperCase() || "ME"
-}
-
 export default function ProfilePage() {
   const { profile, session, refreshProfile } = useWebDashboardContext()
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const initials = getInitials(profile.name, profile.email)
   const profileStats = [
     { label: "角色", value: String(profile.roles.length), icon: Heart },
     { label: "会话", value: session.app.toUpperCase(), icon: Brain },
@@ -279,9 +273,7 @@ export default function ProfilePage() {
                 <article className="row-span-5 flex min-h-0 flex-col bg-white p-5 md:col-span-2">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex min-w-0 items-center gap-4">
-                      <span className="flex size-16 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-lg font-semibold text-white">
-                        {initials}
-                      </span>
+                      <UserAvatar user={profile} size="lg" />
                       <div className="min-w-0">
                         <p className="text-xl font-semibold tracking-tight text-slate-950">{profile.name}</p>
                         <p className="mt-1 text-sm text-slate-500">{profile.email}</p>

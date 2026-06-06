@@ -158,6 +158,20 @@ export const http = {
       method: 'GET',
     }))
   },
+  async getRaw(url: string, config?: AxiosRequestConfig): Promise<Blob> {
+    const requestConfig = createRequestConfig(url, {
+      ...config,
+      method: 'GET',
+      responseType: 'blob',
+    })
+    const response = await axios.request<Blob>(requestConfig)
+
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(response.statusText || 'Request failed')
+    }
+
+    return response.data
+  },
   post<TResponse, TRequest = unknown>(url: string, data?: TRequest, config?: AxiosRequestConfig): Promise<TResponse> {
     return request<TResponse>(createRequestConfig(url, {
       ...config,

@@ -19,6 +19,7 @@ import {
   findPrimaryEmailIdByUserId,
   findRoleIdByCode,
   findUserByNormalizedEmail,
+  findUserProfileById,
   findWebUserByGithubAccount,
   getWebApplicationId,
   getWebRolesForUser,
@@ -26,9 +27,11 @@ import {
   insertRefreshToken,
   isGithubLoginEnabledForWeb,
   linkGithubAccountToUser,
+  updateUserAvatarKey,
 } from '@/auth/repository'
 import { hashTokenJti } from '@/auth/token-hash'
 import { AppError } from '@/lib/app-error'
+import { assertAvatarFile, buildUserAvatarKey } from '@/lib/avatar-storage'
 
 const githubAuthorizeUrl = 'https://github.com/login/oauth/authorize'
 const githubAccessTokenUrl = 'https://github.com/login/oauth/access_token'
@@ -48,6 +51,7 @@ type GithubUser = {
   login: string
   name: string | null
   email: string | null
+  avatar_url: string | null
 }
 
 function getGithubOAuthConfig(c: Context<{ Bindings: ApiBindings }>) {
@@ -187,6 +191,67 @@ function pickVerifiedGithubEmail(user: GithubUser, emails: GithubEmail[]) {
   }
 
   return selectedEmail.email
+}
+
+async function syncGithubAvatarIfMissing(params: {
+  c: Context<{ Bindings: ApiBindings }>
+  userId: string
+  avatarUrl: string | null
+}) {
+  const { c, userId, avatarUrl } = params
+
+  if (!avatarUrl) {
+    return
+  }
+
+  const db = getDb(c.env.DB)
+  const profile = await findUserProfileById(db, userId)
+
+  if (!profile || profile.avatarKey) {
+    return
+  }
+
+  try {
+    const response = await fetch(avatarUrl, {
+      headers: {
+        accept: 'image/jpeg,image/png,image/webp',
+        'user-agent': 'ai-agent-web',
+      },
+    })
+
+    if (!response.ok) {
+      return
+    }
+
+    const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()
+
+    if (!contentType) {
+      return
+    }
+
+    const avatarBytes = await response.arrayBuffer()
+    const avatarFile = new File([avatarBytes], 'github-avatar', { type: contentType })
+    const extension = assertAvatarFile(avatarFile)
+    const nowMs = Date.now()
+    const avatarKey = buildUserAvatarKey(userId, avatarFile, nowMs)
+
+    await c.env.AVATAR_BUCKET.put(avatarKey, avatarBytes, {
+      httpMetadata: {
+        contentType,
+        cacheControl: 'public, max-age=31536000, immutable',
+        contentDisposition: `inline; filename="github-avatar.${extension}"`,
+      },
+    })
+
+    await updateUserAvatarKey({
+      db,
+      userId,
+      avatarKey,
+      updatedAtMs: nowMs,
+    })
+  } catch (error) {
+    console.warn('Unable to sync GitHub avatar', error)
+  }
 }
 
 async function resolveGithubWebUser(params: {
@@ -385,6 +450,7 @@ export async function handleWebGithubCallback(c: Context<{ Bindings: ApiBindings
     ])
     const email = pickVerifiedGithubEmail(githubUser, githubEmails)
     const userId = await resolveGithubWebUser({ c, githubUser, email })
+    await syncGithubAvatarIfMissing({ c, userId, avatarUrl: githubUser.avatar_url })
     const db = getDb(c.env.DB)
     const applicationId = await getWebApplicationId(db)
     const ticket = uuidv7()
