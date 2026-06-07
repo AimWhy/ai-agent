@@ -10,8 +10,22 @@ export const InboxChatMessageSchema = z.object({
   parts: z.array(InboxChatPartSchema).min(1).max(50),
 })
 
+export const InboxChatLlmWireApiSchema = z.enum(['chat_completions', 'responses'])
+
+export const InboxChatLlmReasoningEffortSchema = z.enum(['minimal', 'low', 'medium', 'high'])
+
+export const InboxChatLlmConfigSchema = z.object({
+  providerName: z.string().trim().min(1).max(80).optional(),
+  baseURL: z.string().trim().url().max(300),
+  apiKey: z.string().trim().min(1).max(400),
+  model: z.string().trim().min(1).max(120),
+  wireApi: InboxChatLlmWireApiSchema.optional(),
+  reasoningEffort: InboxChatLlmReasoningEffortSchema.optional(),
+})
+
 export const InboxChatRequestSchema = z.object({
   messages: z.array(InboxChatMessageSchema).min(1).max(20),
+  llmConfig: InboxChatLlmConfigSchema.optional(),
   conversation: z.object({
     name: z.string().min(1).max(120),
     handle: z.string().min(1).max(120),
@@ -28,4 +42,7 @@ export const InboxChatRequestSchema = z.object({
 })
 
 export type InboxChatMessage = z.infer<typeof InboxChatMessageSchema>
+export type InboxChatLlmWireApi = z.infer<typeof InboxChatLlmWireApiSchema>
+export type InboxChatLlmReasoningEffort = z.infer<typeof InboxChatLlmReasoningEffortSchema>
+export type InboxChatLlmConfig = z.infer<typeof InboxChatLlmConfigSchema>
 export type InboxChatRequest = z.infer<typeof InboxChatRequestSchema>

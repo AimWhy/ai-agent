@@ -10,6 +10,7 @@ import {
   Heart,
   MessageCircle,
   PenLine,
+  RadioTower,
   ShieldCheck,
   Sparkles,
   UserRound,
@@ -24,10 +25,22 @@ import {
   PromptInput,
   PromptInputFooter,
   PromptInputHeader,
+  PromptInputSelect,
+  PromptInputSelectContent,
+  PromptInputSelectItem,
+  PromptInputSelectTrigger,
+  PromptInputSelectValue,
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input"
+import { readClientSession } from "@/auth/client-session"
+import {
+  localLlmConfigChangedEventName,
+  readLocalLlmConfigStore,
+  selectLocalLlmConfig,
+  type LocalLlmConfigStore,
+} from "@/auth/local-llm-config"
 import { getWebClientEnv } from "@/env.client"
 import { cn } from "@/lib/utils"
 
@@ -63,6 +76,25 @@ function sliceText(text: string, length: number) {
   return Array.from(text).slice(0, length).join("")
 }
 
+function formatChatErrorMessage(error: Error) {
+  try {
+    const parsed = JSON.parse(error.message) as {
+      error?: {
+        message?: unknown
+      }
+    }
+    const message = parsed.error?.message
+
+    if (typeof message === "string" && message.trim()) {
+      return message
+    }
+  } catch {
+    // Keep the original error message when it is not a JSON API response.
+  }
+
+  return error.message || "聊天请求失败，请检查 LLM 配置。"
+}
+
 function TypingBubble() {
   return (
     <div className="flex w-full items-start gap-3">
@@ -91,11 +123,40 @@ function TypingBubble() {
 
 export function InboxChat({ conversation }: InboxChatProps) {
   const [draftMessage, setDraftMessage] = useState("")
+  const [llmStore, setLlmStore] = useState<LocalLlmConfigStore>({ selectedConfigId: null, items: [] })
+  const enabledLlmConfigs = llmStore.items.filter((item) => item.enabled)
+  const selectedLlmConfig =
+    enabledLlmConfigs.find((item) => item.id === llmStore.selectedConfigId) ?? null
   const transport = useMemo(
     () => new TextStreamChatTransport<UIMessage>({
       api: `${getWebClientEnv().NEXT_PUBLIC_API_BASE_URL}/rpc/chat/inbox`,
-      body: {
-        conversation,
+      prepareSendMessagesRequest({ api, body, messages }) {
+        const storedSession = readClientSession()
+        const latestStore = readLocalLlmConfigStore()
+        const selectedConfig = latestStore.items.find((item) => item.enabled && item.id === latestStore.selectedConfigId)
+        const localLlmConfig = selectedConfig
+          ? {
+              providerName: selectedConfig.providerName,
+              baseURL: selectedConfig.baseURL,
+              model: selectedConfig.model,
+              apiKey: selectedConfig.apiKey,
+              wireApi: selectedConfig.wireApi,
+              ...(selectedConfig.reasoningEffort ? { reasoningEffort: selectedConfig.reasoningEffort } : {}),
+            }
+          : null
+
+        return {
+          api,
+          headers: storedSession
+            ? { authorization: `Bearer ${storedSession.accessToken}` }
+            : undefined,
+          body: {
+            ...body,
+            messages,
+            conversation,
+            ...(localLlmConfig ? { llmConfig: localLlmConfig } : {}),
+          },
+        }
       },
     }),
     [conversation],
@@ -151,6 +212,19 @@ export function InboxChat({ conversation }: InboxChatProps) {
 
     return getTextLength(visibleText) < getTextLength(fullText)
   })
+
+  useEffect(() => {
+    function reloadLlmStore() {
+      setLlmStore(readLocalLlmConfigStore())
+    }
+
+    reloadLlmStore()
+    window.addEventListener(localLlmConfigChangedEventName, reloadLlmStore)
+
+    return () => {
+      window.removeEventListener(localLlmConfigChangedEventName, reloadLlmStore)
+    }
+  }, [])
 
   useEffect(() => {
     setVisibleAssistantTextById((current) => {
@@ -373,7 +447,7 @@ export function InboxChat({ conversation }: InboxChatProps) {
           {shouldShowTypingBubble ? <TypingBubble /> : null}
           {error ? (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-destructive">
-              {error.message}
+              {formatChatErrorMessage(error)}
             </div>
           ) : null}
         </ConversationContent>
@@ -419,6 +493,35 @@ export function InboxChat({ conversation }: InboxChatProps) {
           />
           <PromptInputFooter className="border-t bg-slate-50/70 px-3 py-2">
             <PromptInputTools className="min-w-0 gap-2 text-xs text-muted-foreground">
+              <label className="flex min-w-0 items-center gap-1.5">
+                <RadioTower className="size-3.5" />
+                <PromptInputSelect
+                  disabled={isSending}
+                  onValueChange={(value) => {
+                    selectLocalLlmConfig(value === "platform-default" ? null : value)
+                    setLlmStore(readLocalLlmConfigStore())
+                  }}
+                  value={selectedLlmConfig?.id ?? "platform-default"}
+                >
+                  <PromptInputSelectTrigger
+                    aria-label="选择本次聊天使用的 LLM"
+                    className="h-7 max-w-56 rounded-full border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50 data-placeholder:text-slate-500"
+                    size="sm"
+                  >
+                    <PromptInputSelectValue placeholder="平台默认" />
+                  </PromptInputSelectTrigger>
+                  <PromptInputSelectContent className="min-w-56 rounded-xl border border-slate-200 shadow-none">
+                    <PromptInputSelectItem value="platform-default">
+                      平台默认
+                    </PromptInputSelectItem>
+                    {enabledLlmConfigs.map((item) => (
+                      <PromptInputSelectItem key={item.id} value={item.id}>
+                        {item.name} · {item.model} · {item.wireApi === "responses" ? "Responses" : "Chat"}
+                      </PromptInputSelectItem>
+                    ))}
+                  </PromptInputSelectContent>
+                </PromptInputSelect>
+              </label>
               <span className="flex items-center gap-1.5">
                 <MessageCircle className="size-3.5" />
                 引用当前聊天

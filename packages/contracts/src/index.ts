@@ -62,10 +62,16 @@ export type {
 } from './auth/web-token-refresh.contract'
 export {
   InboxChatMessageSchema,
+  InboxChatLlmConfigSchema,
+  InboxChatLlmReasoningEffortSchema,
+  InboxChatLlmWireApiSchema,
   InboxChatRequestSchema,
 } from './chat/inbox-chat.contract'
 export type {
   InboxChatMessage,
+  InboxChatLlmConfig,
+  InboxChatLlmReasoningEffort,
+  InboxChatLlmWireApi,
   InboxChatRequest,
 } from './chat/inbox-chat.contract'
 export {

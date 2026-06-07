@@ -243,6 +243,10 @@ type RoleDetailPageProps = {
   }>
 }
 
+export function generateStaticParams() {
+  return Object.keys(roleProfiles).map((roleId) => ({ roleId }))
+}
+
 export default async function RoleDetailPage({ params }: RoleDetailPageProps) {
   const { roleId } = await params
   const profile = roleProfiles[roleId] ?? fallbackProfile

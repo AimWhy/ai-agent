@@ -1,84 +1,85 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "api",
-  "main": "src/index.ts",
-  "compatibility_date": "2026-04-22",
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "ai-agent-local-auth",
-      "database_id": "91e63d07-bee3-4c00-9349-cfde384ba6eb",
-      "migrations_dir": "migrations"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "AVATAR_BUCKET",
-      "bucket_name": "ai-agent-local-avatars"
-    }
-  ],
-  "vars": {
-    "APP_ENV": "development",
-    "ADMIN_ORIGIN": "http://localhost:3006",
-    "WEB_ORIGIN": "http://localhost:3005",
-    "ACCESS_TOKEN_TTL_SEC": "900",
-    "REFRESH_TOKEN_TTL_SEC": "2592000",
-    "DEEPSEEK_BASE_URL": "https://api.deepseek.com/v1",
-    "DEEPSEEK_MODEL": "deepseek-chat",
-    "GITHUB_OAUTH_CALLBACK_URL": "http://127.0.0.1:8787/auth/web/github/callback"
-  },
-  "env": {
-    "test": {
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "ai-agent-test-auth",
-          "database_id": "22222222-2222-4222-8222-222222222222",
-          "migrations_dir": "migrations"
-        }
-      ],
-      "r2_buckets": [
-        {
-          "binding": "AVATAR_BUCKET",
-          "bucket_name": "ai-agent-test-avatars"
-        }
-      ],
-      "vars": {
-        "APP_ENV": "test",
-        "ADMIN_ORIGIN": "http://localhost:3006",
-        "WEB_ORIGIN": "http://localhost:3005",
-        "ACCESS_TOKEN_TTL_SEC": "900",
-        "REFRESH_TOKEN_TTL_SEC": "2592000",
-        "DEEPSEEK_BASE_URL": "https://api.deepseek.com/v1",
-        "DEEPSEEK_MODEL": "deepseek-chat"
-      }
-    },
-    "production": {
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "ai-agent-production-auth",
-          "database_id": "33333333-3333-4333-8333-333333333333",
-          "migrations_dir": "migrations"
-        }
-      ],
-      "r2_buckets": [
-        {
-          "binding": "AVATAR_BUCKET",
-          "bucket_name": "ai-agent-production-avatars"
-        }
-      ],
-      "vars": {
-        "APP_ENV": "production",
-        "ADMIN_ORIGIN": "https://ai-agent-admin.pages.dev",
-        "WEB_ORIGIN": "https://ai-agent-web.pages.dev",
-        "ACCESS_TOKEN_TTL_SEC": "900",
-        "REFRESH_TOKEN_TTL_SEC": "2592000",
-        "DEEPSEEK_BASE_URL": "https://api.deepseek.com/v1",
-        "DEEPSEEK_MODEL": "deepseek-chat",
-        "GITHUB_OAUTH_CLIENT_ID": "Ov23li3VyACIQRNmq079",
-        "GITHUB_OAUTH_CALLBACK_URL": "https://api.ai-agent.workers.dev/auth/web/github/callback"
-      }
-    }
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "api",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-04-22",
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "ai-agent-local-auth",
+			"database_id": "91e63d07-bee3-4c00-9349-cfde384ba6eb",
+			"migrations_dir": "migrations"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "AVATAR_BUCKET",
+			"bucket_name": "ai-agent-local-avatars"
+		}
+	],
+	"vars": {
+		"APP_ENV": "development",
+		"ADMIN_ORIGIN": "http://localhost:3006",
+		"WEB_ORIGIN": "http://localhost:3005",
+		"ACCESS_TOKEN_TTL_SEC": "900",
+		"REFRESH_TOKEN_TTL_SEC": "2592000",
+		"DEEPSEEK_BASE_URL": "https://api.deepseek.com/v1",
+		"DEEPSEEK_MODEL": "deepseek-chat",
+		"GITHUB_OAUTH_CALLBACK_URL": "http://127.0.0.1:8787/auth/web/github/callback"
+	},
+	"env": {
+		"test": {
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "ai-agent-test-auth",
+					"database_id": "22222222-2222-4222-8222-222222222222",
+					"migrations_dir": "migrations"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "AVATAR_BUCKET",
+					"bucket_name": "ai-agent-test-avatars"
+				}
+			],
+			"vars": {
+				"APP_ENV": "test",
+				"ADMIN_ORIGIN": "http://localhost:3006",
+				"WEB_ORIGIN": "http://localhost:3005",
+				"ACCESS_TOKEN_TTL_SEC": "900",
+				"REFRESH_TOKEN_TTL_SEC": "2592000",
+				"DEEPSEEK_BASE_URL": "https://api.deepseek.com/v1",
+				"DEEPSEEK_MODEL": "deepseek-chat"
+			}
+		},
+		"production": {
+			"workers_dev": true,
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "ai-agent-production-auth",
+					"database_id": "ba264b43-5d69-4b40-8ba8-375be3dcaebf",
+					"migrations_dir": "migrations"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "AVATAR_BUCKET",
+					"bucket_name": "ai-agent-production-avatars"
+				}
+			],
+			"vars": {
+				"APP_ENV": "production",
+				"ADMIN_ORIGIN": "https://ai-agent-admin.pages.dev",
+				"WEB_ORIGIN": "https://ai-agent-web-66e.pages.dev",
+				"ACCESS_TOKEN_TTL_SEC": "900",
+				"REFRESH_TOKEN_TTL_SEC": "2592000",
+				"DEEPSEEK_BASE_URL": "https://api.deepseek.com/v1",
+				"DEEPSEEK_MODEL": "deepseek-chat",
+				"GITHUB_OAUTH_CLIENT_ID": "Ov23li3VyACIQRNmq079",
+				"GITHUB_OAUTH_CALLBACK_URL": ""
+			}
+		}
+	}
 }
