@@ -28,5 +28,9 @@ export const data = {
       title: '订阅管理',
       url: '/subscriptions',
     },
+    {
+      title: '财务管理',
+      url: '/finance',
+    },
   ],
 }

@@ -24,9 +24,11 @@ export const InboxChatLlmConfigSchema = z.object({
 })
 
 export const InboxChatRequestSchema = z.object({
+  conversationId: z.string().min(1).optional(),
   messages: z.array(InboxChatMessageSchema).min(1).max(20),
   llmConfig: InboxChatLlmConfigSchema.optional(),
   conversation: z.object({
+    id: z.string().min(1).optional(),
     name: z.string().min(1).max(120),
     handle: z.string().min(1).max(120),
     headline: z.string().min(1).max(200),
@@ -38,7 +40,36 @@ export const InboxChatRequestSchema = z.object({
     chemistryLabel: z.string().min(1).max(80),
     rhythm: z.string().min(1).max(80),
     profileNote: z.string().min(1).max(2000),
+    imageKey: z.string().nullable().optional(),
   }),
+})
+
+export const AgentConversationMessageRoleSchema = z.enum(['user', 'assistant'])
+
+export const AgentConversationMessageSchema = z.object({
+  id: z.string().min(1),
+  conversationId: z.string().min(1),
+  agentId: z.string().min(1),
+  role: AgentConversationMessageRoleSchema,
+  content: z.string(),
+  status: z.enum(['completed', 'failed']),
+  createdAtMs: z.number().int().nonnegative(),
+})
+
+export const AgentConversationResponseSchema = z.object({
+  conversationId: z.string().min(1),
+  agentId: z.string().min(1),
+  title: z.string().nullable(),
+  summary: z.string().nullable(),
+  messageCount: z.number().int().nonnegative(),
+  openingMessage: z.string().nullable(),
+  messages: z.array(AgentConversationMessageSchema),
+  nextCursor: z.string().nullable(),
+})
+
+export const AgentConversationMessagesResponseSchema = z.object({
+  messages: z.array(AgentConversationMessageSchema),
+  nextCursor: z.string().nullable(),
 })
 
 export type InboxChatMessage = z.infer<typeof InboxChatMessageSchema>
@@ -46,3 +77,7 @@ export type InboxChatLlmWireApi = z.infer<typeof InboxChatLlmWireApiSchema>
 export type InboxChatLlmReasoningEffort = z.infer<typeof InboxChatLlmReasoningEffortSchema>
 export type InboxChatLlmConfig = z.infer<typeof InboxChatLlmConfigSchema>
 export type InboxChatRequest = z.infer<typeof InboxChatRequestSchema>
+export type AgentConversationMessageRole = z.infer<typeof AgentConversationMessageRoleSchema>
+export type AgentConversationMessage = z.infer<typeof AgentConversationMessageSchema>
+export type AgentConversationResponse = z.infer<typeof AgentConversationResponseSchema>
+export type AgentConversationMessagesResponse = z.infer<typeof AgentConversationMessagesResponseSchema>

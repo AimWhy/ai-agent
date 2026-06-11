@@ -19,3 +19,14 @@ export function getAvatarUrl(avatarKey: string | null) {
 
   return url.toString()
 }
+
+export function getAgentImageUrl(imageKey: string | null) {
+  if (!imageKey) {
+    return null
+  }
+
+  const url = new URL('/rpc/agent/my/image', resolveApiBaseUrl())
+  url.searchParams.set('key', imageKey)
+
+  return url.toString()
+}

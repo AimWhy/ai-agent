@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Bot, Brain, Command, Compass, Heart, Inbox, PlugZap, Sparkles, UserRound } from "lucide-react"
+import { Bot, Brain, Coins, Command, Compass, Heart, Inbox, PlugZap, Sparkles, UserRound } from "lucide-react"
 
 import { useWebDashboardContext } from "@/components/web-dashboard-guard"
 import { NavUser } from "./nav-user"
@@ -49,6 +49,11 @@ const data = {
       title: "订阅套餐",
       url: "/subscription-plans",
       icon: Sparkles,
+    },
+    {
+      title: "购买 Token",
+      url: "/buy-tokens",
+      icon: Coins,
     },
     {
       title: "LLM 接入",

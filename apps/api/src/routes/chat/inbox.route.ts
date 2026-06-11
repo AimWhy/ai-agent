@@ -1,14 +1,33 @@
 import { zValidator } from '@hono/zod-validator'
+import { ChatPromptTemplate } from '@langchain/core/prompts'
+import { ChatOpenAI } from '@langchain/openai'
 import { Hono, type Context } from 'hono'
+import { z } from 'zod'
 import {
+  AgentConversationMessagesResponseSchema,
+  AgentConversationResponseSchema,
   BizCode,
   InboxChatRequestSchema,
+  buildSuccess,
 } from '@repo/contracts'
 import { authUnauthorizedError } from '@/auth/errors'
 import { buildValidationErrorHandler } from '@/auth/http'
 import { verifyAccessToken } from '@/auth/jwt'
+import {
+  findUserAgentCompanionOwner,
+  findUserAgentCompanionPrompt,
+  getOrCreateDefaultAgentConversation,
+  insertAgentConversationMessage,
+  insertAgentMemory,
+  listActiveAgentMemories,
+  listAgentConversationMessages,
+  updateAgentConversationAfterMessage,
+  updateUserAgentCompanionLatestAssistantMessage,
+} from '@/auth/repository'
 import type { ApiBindings } from '@/bindings'
+import { getDb } from '@/db/client'
 import { getApiEnv } from '@/env'
+import { createApiMeta } from '@/lib/api-meta'
 import { AppError } from '@/lib/app-error'
 
 const inboxChatRoute = new Hono<{ Bindings: ApiBindings }>()
@@ -28,6 +47,54 @@ type ChatProviderConfig = {
 
 const emptyUpstreamMessage = '上游模型返回成功，但没有提供可展示的文本内容。请检查 LLM 协议、模型名与中转接口是否匹配。'
 const htmlUpstreamMessage = '上游返回的是网页内容，而不是模型响应。请检查 Base URL 与 Wire API 是否匹配，当前中转通常需要选择 Responses 协议。'
+const recentMessageLimit = 18
+const initialHistoryLimit = 40
+const memoryInjectionLimit = 12
+const memoryExtractionLimit = 2
+
+const AgentMemoryExtractionSchema = z.object({
+  memories: z.array(z.object({
+    type: z.enum(['偏好', '边界', '关系目标', '对话风格', '重要事实']),
+    content: z.string().trim().min(1).max(500),
+    importance: z.number().int().min(1).max(5),
+  })).max(memoryExtractionLimit),
+})
+
+type ExtractedAgentMemory = z.infer<typeof AgentMemoryExtractionSchema>['memories'][number]
+
+const agentMemoryExtractionPrompt = ChatPromptTemplate.fromMessages([
+  [
+    'system',
+    [
+      '你是 AI 伴侣聊天产品的长期记忆抽取器。',
+      '你的任务是从本轮用户消息和 Agent 回复中提取对未来对话稳定有用的长期记忆。',
+      '只记录用户明确表达或强烈暗示的稳定信息，例如偏好、边界、关系目标、对话风格、重要事实。',
+      '不要记录临时寒暄、一次性问题、Agent 自己编造的信息、重复的已有记忆、没有把握的推断。',
+      `最多返回 ${memoryExtractionLimit} 条记忆；如果没有值得长期保存的信息，返回空数组。`,
+      'content 使用第一人称或面向用户的简洁中文事实句，不要超过 80 个汉字。',
+      'importance 使用 1 到 5，边界、禁忌、长期偏好、重要事件通常更高。',
+      '输出必须是可被 LangChain 结构化解析的 JSON 对象。',
+    ].join('\n'),
+  ],
+  [
+    'human',
+    [
+      'Agent 名称：{agentName}',
+      '',
+      '已有长期记忆：',
+      '{existingMemories}',
+      '',
+      '此前会话摘要：',
+      '{conversationSummary}',
+      '',
+      '本轮用户消息：',
+      '{userText}',
+      '',
+      '本轮 Agent 回复：',
+      '{assistantText}',
+    ].join('\n'),
+  ],
+])
 
 async function requireWebAccessToken(c: Context<{ Bindings: ApiBindings }>) {
   const authorization = c.req.header('authorization')
@@ -416,6 +483,436 @@ function buildTextStreamResponse(textStream: ReadableStream<Uint8Array>) {
   })
 }
 
+function normalizeLatestAssistantMessage(text: string) {
+  return text.replace(/\s+/g, ' ').trim().slice(0, 2000)
+}
+
+function normalizeStoredMessage(text: string) {
+  return text.replace(/\s+\n/g, '\n').trim().slice(0, 8000)
+}
+
+function toConversationMessageResponse(message: {
+  id: string
+  conversationId: string
+  agentId: string
+  role: 'user' | 'assistant'
+  content: string
+  status: 'completed' | 'failed'
+  createdAtMs: number
+}) {
+  return {
+    id: message.id,
+    conversationId: message.conversationId,
+    agentId: message.agentId,
+    role: message.role,
+    content: message.content,
+    status: message.status,
+    createdAtMs: message.createdAtMs,
+  }
+}
+
+function getOldestMessageCursor(messages: Array<{ createdAtMs: number }>, requestedLimit: number) {
+  if (messages.length < requestedLimit || messages.length === 0) {
+    return null
+  }
+
+  return String(messages[0]!.createdAtMs)
+}
+
+function buildConversationSummary(params: {
+  previousSummary: string | null
+  recentMessages: Array<{ role: 'user' | 'assistant'; content: string }>
+  userText: string
+  assistantText: string
+}) {
+  const sourceLines = [
+    params.previousSummary ? `既有摘要：${params.previousSummary}` : '',
+    ...params.recentMessages.slice(-8).map((message) => `${message.role === 'user' ? '用户' : 'Agent'}：${message.content}`),
+    `用户：${params.userText}`,
+    `Agent：${params.assistantText}`,
+  ].filter(Boolean)
+
+  return sourceLines
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(-1600)
+}
+
+type StoredAgentMemory = {
+  type: string
+  content: string
+  importance: number
+}
+
+function formatExistingMemories(memories: StoredAgentMemory[]) {
+  if (memories.length === 0) {
+    return '暂无'
+  }
+
+  return memories
+    .slice(0, 50)
+    .map((memory, index) => `${index + 1}. [${memory.type} / 重要度 ${memory.importance}] ${memory.content}`)
+    .join('\n')
+}
+
+function normalizeMemoryContent(content: string) {
+  return content.replace(/\s+/g, ' ').trim().slice(0, 500)
+}
+
+function normalizeMemoryImportance(importance: number) {
+  if (!Number.isFinite(importance)) {
+    return 3
+  }
+
+  return Math.min(5, Math.max(1, Math.round(importance)))
+}
+
+function buildLangChainMemoryModel(providerConfig: ChatProviderConfig) {
+  return new ChatOpenAI({
+    model: providerConfig.model,
+    apiKey: providerConfig.apiKey,
+    temperature: 0,
+    useResponsesApi: providerConfig.wireApi === 'responses',
+    configuration: {
+      baseURL: providerConfig.baseURL.replace(/\/$/, ''),
+    },
+    ...(providerConfig.reasoningEffort ? { reasoning: { effort: providerConfig.reasoningEffort } } : {}),
+    ...(providerConfig.wireApi === 'responses' ? { zdrEnabled: true } : {}),
+  })
+}
+
+async function invokeLangChainMemoryExtraction(params: {
+  method: 'jsonSchema' | 'functionCalling' | 'jsonMode'
+  providerConfig: ChatProviderConfig
+  agentName: string
+  existingMemories: StoredAgentMemory[]
+  conversationSummary: string | null
+  userText: string
+  assistantText: string
+  signal?: AbortSignal
+}) {
+  const model = buildLangChainMemoryModel(params.providerConfig)
+  const structuredModel = model.withStructuredOutput(AgentMemoryExtractionSchema, {
+    name: 'agent_memory_extraction',
+    method: params.method,
+  })
+  const chain = agentMemoryExtractionPrompt.pipe(structuredModel)
+
+  const result = await chain.invoke({
+    agentName: params.agentName || '未命名 Agent',
+    existingMemories: formatExistingMemories(params.existingMemories),
+    conversationSummary: params.conversationSummary || '暂无',
+    userText: params.userText,
+    assistantText: params.assistantText.slice(0, 4000),
+  }, params.signal ? { signal: params.signal } : undefined)
+
+  return AgentMemoryExtractionSchema.parse(result).memories
+}
+
+async function extractAgentMemoriesWithLangChain(params: {
+  providerConfig: ChatProviderConfig
+  agentName: string
+  existingMemories: StoredAgentMemory[]
+  conversationSummary: string | null
+  userText: string
+  assistantText: string
+  signal?: AbortSignal
+}): Promise<ExtractedAgentMemory[]> {
+  const userText = normalizeStoredMessage(params.userText)
+  const assistantText = normalizeStoredMessage(params.assistantText)
+
+  if (!userText || !assistantText) {
+    return []
+  }
+
+  const methods: Array<'jsonSchema' | 'functionCalling' | 'jsonMode'> = params.providerConfig.wireApi === 'responses'
+    ? ['jsonSchema', 'functionCalling', 'jsonMode']
+    : ['functionCalling', 'jsonSchema', 'jsonMode']
+  let lastError: unknown = null
+
+  for (const method of methods) {
+    try {
+      return await invokeLangChainMemoryExtraction({
+        ...params,
+        method,
+        userText,
+        assistantText,
+      })
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  throw lastError
+}
+
+async function persistAgentMemoriesFromTurn(params: {
+  db: ReturnType<typeof getDb>
+  userId: string
+  agentId: string
+  agentName: string
+  providerConfig: ChatProviderConfig
+  previousSummary: string | null
+  userText: string
+  assistantText: string
+  sourceMessageId: string
+  signal?: AbortSignal
+}) {
+  const existingMemories = await listActiveAgentMemories({
+    db: params.db,
+    userId: params.userId,
+    agentId: params.agentId,
+    limit: 50,
+  })
+  const candidateMemories = await extractAgentMemoriesWithLangChain({
+    providerConfig: params.providerConfig,
+    agentName: params.agentName,
+    existingMemories,
+    conversationSummary: params.previousSummary,
+    userText: params.userText,
+    assistantText: params.assistantText,
+    signal: params.signal,
+  })
+  const existingMemoryContents = new Set(
+    existingMemories.map((memory) => normalizeMemoryContent(memory.content)),
+  )
+
+  for (const memory of candidateMemories.slice(0, memoryExtractionLimit)) {
+    const content = normalizeMemoryContent(memory.content)
+
+    if (!content || existingMemoryContents.has(content)) {
+      continue
+    }
+
+    await insertAgentMemory({
+      db: params.db,
+      id: crypto.randomUUID(),
+      userId: params.userId,
+      agentId: params.agentId,
+      type: memory.type,
+      content,
+      importance: normalizeMemoryImportance(memory.importance),
+      sourceMessageId: params.sourceMessageId,
+      nowMs: Date.now(),
+    })
+    existingMemoryContents.add(content)
+  }
+}
+
+function scheduleAgentMemoryExtraction(params: Parameters<typeof persistAgentMemoriesFromTurn>[0] & {
+  c: Context<{ Bindings: ApiBindings }>
+}) {
+  const task = persistAgentMemoriesFromTurn(params).catch((error) => {
+    console.warn('LangChain agent memory extraction failed', error)
+  })
+
+  try {
+    params.c.executionCtx.waitUntil(task)
+  } catch {
+    return task
+  }
+
+  return Promise.resolve()
+}
+
+async function requireOwnedAgentConversation(params: {
+  c: Context<{ Bindings: ApiBindings }>
+  userId: string
+  agentId: string
+}) {
+  const db = getDb(params.c.env.DB)
+  const agent = await findUserAgentCompanionOwner(db, {
+    userId: params.userId,
+    agentId: params.agentId,
+  })
+
+  if (!agent) {
+    throw authUnauthorizedError('Agent is not available')
+  }
+
+  const conversation = await getOrCreateDefaultAgentConversation({
+    db,
+    id: crypto.randomUUID(),
+    userId: params.userId,
+    agentId: params.agentId,
+    title: agent.name,
+    nowMs: Date.now(),
+  })
+
+  return {
+    agent,
+    conversation,
+  }
+}
+
+async function saveLatestAssistantMessage(params: {
+  c: Context<{ Bindings: ApiBindings }>
+  userId: string
+  agentId: string | undefined
+  text: string
+}) {
+  const message = normalizeLatestAssistantMessage(params.text)
+
+  if (!params.agentId || !message) {
+    return
+  }
+
+  await updateUserAgentCompanionLatestAssistantMessage({
+    db: getDb(params.c.env.DB),
+    userId: params.userId,
+    agentId: params.agentId,
+    message,
+    nowMs: Date.now(),
+  })
+}
+
+async function saveAssistantTurn(params: {
+  c: Context<{ Bindings: ApiBindings }>
+  userId: string
+  agentId: string | undefined
+  agentName: string
+  conversationId: string | undefined
+  sourceUserMessageId: string | null
+  userText: string
+  assistantText: string
+  providerConfig: ChatProviderConfig
+  previousSummary: string | null
+  previousMessageCount: number
+  recentMessages: Array<{ role: 'user' | 'assistant'; content: string }>
+}) {
+  const message = normalizeStoredMessage(params.assistantText)
+
+  if (!params.agentId || !params.conversationId || !message) {
+    await saveLatestAssistantMessage({
+      c: params.c,
+      userId: params.userId,
+      agentId: params.agentId,
+      text: params.assistantText,
+    })
+    return
+  }
+
+  const db = getDb(params.c.env.DB)
+  const nowMs = Date.now()
+  const assistantMessageId = crypto.randomUUID()
+  await insertAgentConversationMessage({
+    db,
+    id: assistantMessageId,
+    conversationId: params.conversationId,
+    userId: params.userId,
+    agentId: params.agentId,
+    role: 'assistant',
+    content: message,
+    status: 'completed',
+    nowMs,
+  })
+  const nextSummary = buildConversationSummary({
+    previousSummary: params.previousSummary,
+    recentMessages: params.recentMessages,
+    userText: params.userText,
+    assistantText: message,
+  })
+  await updateAgentConversationAfterMessage({
+    db,
+    userId: params.userId,
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    summary: nextSummary,
+    messageCount: params.previousMessageCount + (params.sourceUserMessageId ? 2 : 1),
+    lastMessageAtMs: nowMs,
+    nowMs,
+  })
+  await saveLatestAssistantMessage({
+    c: params.c,
+    userId: params.userId,
+    agentId: params.agentId,
+    text: message,
+  })
+
+  await scheduleAgentMemoryExtraction({
+    c: params.c,
+    db,
+    userId: params.userId,
+    agentId: params.agentId,
+    agentName: params.agentName,
+    providerConfig: params.providerConfig,
+    previousSummary: params.previousSummary,
+    userText: params.userText,
+    assistantText: message,
+    sourceMessageId: params.sourceUserMessageId ?? assistantMessageId,
+  })
+}
+
+inboxChatRoute.get('/:agentId/conversation', async (c) => {
+  const claims = await requireWebAccessToken(c)
+  const agentId = c.req.param('agentId')?.trim()
+
+  if (!agentId) {
+    throw new AppError(BizCode.COMMON_INVALID_REQUEST, 'Agent id is required', 400)
+  }
+
+  const { agent, conversation } = await requireOwnedAgentConversation({
+    c,
+    userId: claims.sub,
+    agentId,
+  })
+  const messages = await listAgentConversationMessages({
+    db: getDb(c.env.DB),
+    userId: claims.sub,
+    agentId,
+    conversationId: conversation.id,
+    limit: initialHistoryLimit,
+  })
+  const res = AgentConversationResponseSchema.parse({
+    conversationId: conversation.id,
+    agentId,
+    title: conversation.title,
+    summary: conversation.summary,
+    messageCount: conversation.messageCount,
+    openingMessage: agent.openingMessage,
+    messages: messages.map(toConversationMessageResponse),
+    nextCursor: getOldestMessageCursor(messages, initialHistoryLimit),
+  })
+
+  return c.json(buildSuccess(res, createApiMeta()))
+})
+
+inboxChatRoute.get('/:agentId/messages', async (c) => {
+  const claims = await requireWebAccessToken(c)
+  const agentId = c.req.param('agentId')?.trim()
+  const cursor = c.req.query('cursor')?.trim()
+  const beforeMs = cursor ? Number(cursor) : undefined
+
+  if (!agentId) {
+    throw new AppError(BizCode.COMMON_INVALID_REQUEST, 'Agent id is required', 400)
+  }
+
+  if (cursor && (!Number.isFinite(beforeMs) || beforeMs! <= 0)) {
+    throw new AppError(BizCode.COMMON_INVALID_REQUEST, 'Invalid cursor', 400)
+  }
+
+  const { conversation } = await requireOwnedAgentConversation({
+    c,
+    userId: claims.sub,
+    agentId,
+  })
+  const messages = await listAgentConversationMessages({
+    db: getDb(c.env.DB),
+    userId: claims.sub,
+    agentId,
+    conversationId: conversation.id,
+    beforeMs,
+    limit: initialHistoryLimit,
+  })
+  const res = AgentConversationMessagesResponseSchema.parse({
+    messages: messages.map(toConversationMessageResponse),
+    nextCursor: getOldestMessageCursor(messages, initialHistoryLimit),
+  })
+
+  return c.json(buildSuccess(res, createApiMeta()))
+})
+
 inboxChatRoute.post(
   '/',
   zValidator(
@@ -424,19 +921,94 @@ inboxChatRoute.post(
     buildValidationErrorHandler('Invalid chat payload'),
   ),
   async (c) => {
-    await requireWebAccessToken(c)
+    const claims = await requireWebAccessToken(c)
 
     const env = getApiEnv(c.env)
     const payload = c.req.valid('json')
     const providerConfig = resolveChatProviderConfig({ payload, env })
+    const agentId = payload.conversation.id
+    const db = getDb(c.env.DB)
+    const ownedConversation = agentId
+      ? await requireOwnedAgentConversation({
+          c,
+          userId: claims.sub,
+          agentId,
+        })
+      : null
+    const conversationId = ownedConversation?.conversation.id ?? payload.conversationId
+    const agentPrompt = agentId
+      ? await findUserAgentCompanionPrompt(db, {
+          userId: claims.sub,
+          agentId,
+        })
+      : null
+    const storedRecentMessages = agentId && conversationId
+      ? await listAgentConversationMessages({
+          db,
+          userId: claims.sub,
+          agentId,
+          conversationId,
+          limit: recentMessageLimit,
+        })
+      : []
+    const activeMemories = agentId
+      ? await listActiveAgentMemories({
+          db,
+          userId: claims.sub,
+          agentId,
+          limit: memoryInjectionLimit,
+        })
+      : []
+    const latestPayloadUserMessage = [...payload.messages]
+      .reverse()
+      .find((message) => message.role === 'user' && extractText(message))
+    const latestUserText = latestPayloadUserMessage ? normalizeStoredMessage(extractText(latestPayloadUserMessage)) : ''
+    let sourceUserMessageId: string | null = null
+
+    if (agentId && conversationId && latestUserText) {
+      sourceUserMessageId = crypto.randomUUID()
+      const userMessageNowMs = Date.now()
+
+      await insertAgentConversationMessage({
+        db,
+        id: sourceUserMessageId,
+        conversationId,
+        userId: claims.sub,
+        agentId,
+        role: 'user',
+        content: latestUserText,
+        status: 'completed',
+        nowMs: userMessageNowMs,
+      })
+      await updateAgentConversationAfterMessage({
+        db,
+        userId: claims.sub,
+        agentId,
+        conversationId,
+        summary: ownedConversation?.conversation.summary ?? null,
+        messageCount: (ownedConversation?.conversation.messageCount ?? 0) + 1,
+        lastMessageAtMs: userMessageNowMs,
+        nowMs: userMessageNowMs,
+      })
+    }
+
     const messages: ChatCompletionMessage[] = [
       {
         role: 'system',
         content: [
-          '你是 AI Agent Web 控制台里的聊天陪伴助手。',
+          agentPrompt?.defaultPrompt || '你是 AI Agent Web 控制台里的聊天陪伴助手。',
           '请基于当前聊天对象、关系氛围和用户意图，用简洁、自然的中文回答用户。',
           '如果用户要求起草回复，请直接给出可发送的聊天内容，避免正式公文格式和职场汇报语气。',
           '你的建议应尊重双方边界，避免操控式话术、制造焦虑或诱导过度解读。',
+          activeMemories.length > 0
+            ? [
+                '以下是用户与该 Agent 的长期记忆，请优先尊重：',
+                ...activeMemories.map((memory) => `- [${memory.type} / 重要度 ${memory.importance}] ${memory.content}`),
+              ].join('\n')
+            : '',
+          ownedConversation?.conversation.summary
+            ? `此前对话摘要：${ownedConversation.conversation.summary}`
+            : '',
         ].join('\n'),
       },
       {
@@ -454,8 +1026,15 @@ inboxChatRoute.post(
       },
     ]
 
-    for (const message of payload.messages) {
-      const text = extractText(message)
+    const promptHistory = storedRecentMessages.length > 0
+      ? storedRecentMessages
+      : payload.messages.map((message) => ({
+          role: message.role,
+          content: extractText(message),
+        }))
+
+    for (const message of promptHistory) {
+      const text = normalizeStoredMessage(message.content)
 
       if (!text) {
         continue
@@ -464,12 +1043,20 @@ inboxChatRoute.post(
       messages.push({ role: message.role, content: text })
     }
 
+    if (storedRecentMessages.length > 0 && latestUserText) {
+      messages.push({ role: 'user', content: latestUserText })
+    }
+
     const upstreamResult = await fetchUpstreamChat({
       providerConfig,
       messages,
       signal: c.req.raw.signal,
     })
     const upstream = upstreamResult.upstream
+    const effectiveProviderConfig: ChatProviderConfig = {
+      ...providerConfig,
+      wireApi: upstreamResult.wireApi,
+    }
 
     if (!upstream.ok) {
       console.warn('Chat stream failed', {
@@ -493,6 +1080,21 @@ inboxChatRoute.post(
         ? htmlUpstreamMessage
         : extractTextFromRawPayload(upstreamText) || emptyUpstreamMessage
 
+      await saveAssistantTurn({
+        c,
+        userId: claims.sub,
+        agentId,
+        agentName: payload.conversation.name,
+        conversationId,
+        sourceUserMessageId,
+        userText: latestUserText,
+        assistantText: responseText,
+        providerConfig: effectiveProviderConfig,
+        previousSummary: ownedConversation?.conversation.summary ?? null,
+        previousMessageCount: ownedConversation?.conversation.messageCount ?? 0,
+        recentMessages: storedRecentMessages,
+      })
+
       return buildTextStreamResponse(new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(new TextEncoder().encode(responseText))
@@ -509,9 +1111,24 @@ inboxChatRoute.post(
         let buffer = ''
         let closed = false
         let hasContent = false
+        let assistantMessageText = ''
 
         if (!reader) {
           controller.enqueue(encoder.encode(emptyUpstreamMessage))
+          await saveAssistantTurn({
+            c,
+            userId: claims.sub,
+            agentId,
+            agentName: payload.conversation.name,
+            conversationId,
+            sourceUserMessageId,
+            userText: latestUserText,
+            assistantText: emptyUpstreamMessage,
+            providerConfig: effectiveProviderConfig,
+            previousSummary: ownedConversation?.conversation.summary ?? null,
+            previousMessageCount: ownedConversation?.conversation.messageCount ?? 0,
+            recentMessages: storedRecentMessages,
+          })
           controller.close()
           return
         }
@@ -536,8 +1153,23 @@ inboxChatRoute.post(
               if (result.done) {
                 if (!hasContent) {
                   controller.enqueue(encoder.encode(emptyUpstreamMessage))
+                  assistantMessageText += emptyUpstreamMessage
                 }
 
+                await saveAssistantTurn({
+                  c,
+                  userId: claims.sub,
+                  agentId,
+                  agentName: payload.conversation.name,
+                  conversationId,
+                  sourceUserMessageId,
+                  userText: latestUserText,
+                  assistantText: assistantMessageText,
+                  providerConfig: effectiveProviderConfig,
+                  previousSummary: ownedConversation?.conversation.summary ?? null,
+                  previousMessageCount: ownedConversation?.conversation.messageCount ?? 0,
+                  recentMessages: storedRecentMessages,
+                })
                 closed = true
                 controller.close()
                 break
@@ -545,6 +1177,7 @@ inboxChatRoute.post(
 
               if (result.text) {
                 hasContent = true
+                assistantMessageText += result.text
                 controller.enqueue(encoder.encode(result.text))
               }
             }
@@ -559,6 +1192,7 @@ inboxChatRoute.post(
 
             if (result.text) {
               hasContent = true
+              assistantMessageText += result.text
               controller.enqueue(encoder.encode(result.text))
             }
           }
@@ -566,8 +1200,23 @@ inboxChatRoute.post(
           if (!closed) {
             if (!hasContent) {
               controller.enqueue(encoder.encode(emptyUpstreamMessage))
+              assistantMessageText += emptyUpstreamMessage
             }
 
+            await saveAssistantTurn({
+              c,
+              userId: claims.sub,
+              agentId,
+              agentName: payload.conversation.name,
+              conversationId,
+              sourceUserMessageId,
+              userText: latestUserText,
+              assistantText: assistantMessageText,
+              providerConfig: effectiveProviderConfig,
+              previousSummary: ownedConversation?.conversation.summary ?? null,
+              previousMessageCount: ownedConversation?.conversation.messageCount ?? 0,
+              recentMessages: storedRecentMessages,
+            })
             controller.close()
           }
         } catch (error) {

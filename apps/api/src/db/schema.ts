@@ -161,6 +161,133 @@ export const userSubscriptionBindings = sqliteTable(
   ],
 )
 
+export const financialBills = sqliteTable(
+  'financial_bills',
+  {
+    id: text('id').primaryKey(),
+    wechatNickname: text('wechat_nickname').notNull(),
+    email: text('email').notNull(),
+    normalizedEmail: text('normalized_email').notNull(),
+    paidAmountCents: integer('paid_amount_cents').notNull(),
+    paidAtMs: integer('paid_at_ms').notNull(),
+    billingMonth: text('billing_month').notNull(),
+    isRefunded: integer('is_refunded').notNull(),
+    refundAmountCents: integer('refund_amount_cents').notNull(),
+    note: text('note'),
+    createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+  },
+  (table) => [
+    index('idx_financial_bills_billing_month_paid_at').on(table.billingMonth, table.paidAtMs, table.id),
+    index('idx_financial_bills_normalized_email').on(table.normalizedEmail),
+  ],
+)
+
+export const userAgentCompanions = sqliteTable(
+  'user_agent_companions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    headline: text('headline'),
+    description: text('description'),
+    storyBackground: text('story_background'),
+    personalityPrompt: text('personality_prompt'),
+    tonePrompt: text('tone_prompt'),
+    guardrailsPrompt: text('guardrails_prompt'),
+    openingMessage: text('opening_message'),
+    defaultPrompt: text('default_prompt'),
+    visibility: text('visibility'),
+    imageKey: text('image_key'),
+    lastAssistantMessage: text('last_assistant_message'),
+    lastAssistantMessageAtMs: integer('last_assistant_message_at_ms'),
+    status: text('status').notNull(),
+    createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+    publishedAtMs: integer('published_at_ms'),
+    archivedAtMs: integer('archived_at_ms'),
+  },
+  (table) => [
+    index('idx_user_agent_companions_user_id').on(table.userId),
+    index('idx_user_agent_companions_user_status').on(table.userId, table.status),
+  ],
+)
+
+export const agentConversations = sqliteTable(
+  'agent_conversations',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => userAgentCompanions.id, { onDelete: 'cascade' }),
+    title: text('title'),
+    summary: text('summary'),
+    messageCount: integer('message_count').notNull(),
+    lastMessageAtMs: integer('last_message_at_ms'),
+    createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_agent_conversations_user_agent_unique').on(table.userId, table.agentId),
+    index('idx_agent_conversations_user_updated').on(table.userId, table.updatedAtMs),
+  ],
+)
+
+export const agentConversationMessages = sqliteTable(
+  'agent_conversation_messages',
+  {
+    id: text('id').primaryKey(),
+    conversationId: text('conversation_id')
+      .notNull()
+      .references(() => agentConversations.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => userAgentCompanions.id, { onDelete: 'cascade' }),
+    role: text('role').notNull(),
+    content: text('content').notNull(),
+    status: text('status').notNull(),
+    metadataJson: text('metadata_json'),
+    createdAtMs: integer('created_at_ms').notNull(),
+  },
+  (table) => [
+    index('idx_agent_conversation_messages_conversation_created').on(table.conversationId, table.createdAtMs, table.id),
+    index('idx_agent_conversation_messages_agent_created').on(table.userId, table.agentId, table.createdAtMs),
+  ],
+)
+
+export const agentMemories = sqliteTable(
+  'agent_memories',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => userAgentCompanions.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(),
+    content: text('content').notNull(),
+    importance: integer('importance').notNull(),
+    status: text('status').notNull(),
+    sourceMessageId: text('source_message_id').references(() => agentConversationMessages.id, { onDelete: 'set null' }),
+    createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+  },
+  (table) => [
+    index('idx_agent_memories_agent_status_importance').on(table.userId, table.agentId, table.status, table.importance, table.updatedAtMs),
+    index('idx_agent_memories_source_message').on(table.sourceMessageId),
+  ],
+)
+
 export const userRoleBindings = sqliteTable(
   'user_role_bindings',
   {
@@ -286,4 +413,9 @@ export const schema = {
   defaultAvatarVersions,
   subscriptionPlans,
   userSubscriptionBindings,
+  financialBills,
+  userAgentCompanions,
+  agentConversations,
+  agentConversationMessages,
+  agentMemories,
 }

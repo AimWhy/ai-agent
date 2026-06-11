@@ -2,8 +2,10 @@ import { Hono } from 'hono'
 import type { ApiBindings } from '@/bindings'
 import adminAuthRoute from './auth/admin.route'
 import webAuthRoute from './auth/web.route'
+import myAgentRoute from './agent/my.route'
 import catalogRoute from './catalog/list.route'
 import inboxChatRoute from './chat/inbox.route'
+import financialBillRoute from './financial/bill.route'
 import orderRoute from './order/detail.route'
 import roleRoute from './role/management.route'
 import subscriptionPlanRoute from './subscription/plan.route'
@@ -18,9 +20,11 @@ const appRoutes = routes
   .route('/health', healthRoute)
   .route('/auth/admin', adminAuthRoute)
   .route('/auth/web', webAuthRoute)
+  .route('/rpc/agent/my', myAgentRoute)
   .route('/rpc/system/ping', pingRoute)
   .route('/rpc/catalog', catalogRoute)
   .route('/rpc/chat/inbox', inboxChatRoute)
+  .route('/rpc/financial/bill', financialBillRoute)
   .route('/rpc/user', userRoute)
   .route('/rpc/role', roleRoute)
   .route('/rpc/subscription/plan', subscriptionPlanRoute)

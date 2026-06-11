@@ -1,11 +1,11 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useChat, type UIMessage } from "@ai-sdk/react"
 import { TextStreamChatTransport } from "ai"
-import type { InboxChatRequest } from "@repo/contracts"
+import type { AgentConversationResponse, InboxChatRequest } from "@repo/contracts"
 import {
-  Bot,
   Clock3,
   Heart,
   MessageCircle,
@@ -35,12 +35,14 @@ import {
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input"
 import { readClientSession } from "@/auth/client-session"
+import { getAgentConversation, getAgentConversationMessages } from "@/auth/api"
 import {
   localLlmConfigChangedEventName,
   readLocalLlmConfigStore,
   selectLocalLlmConfig,
   type LocalLlmConfigStore,
 } from "@/auth/local-llm-config"
+import { AgentAvatar } from "@/components/agent-avatar"
 import { getWebClientEnv } from "@/env.client"
 import { cn } from "@/lib/utils"
 
@@ -48,6 +50,11 @@ type ChatConversation = InboxChatRequest["conversation"]
 
 type InboxChatProps = {
   conversation: ChatConversation
+  onConversationUpdated?: () => void
+}
+
+type InboxChatInnerProps = InboxChatProps & {
+  serverConversation: AgentConversationResponse
 }
 
 const quickPrompts = [
@@ -60,6 +67,53 @@ const quickPrompts = [
 const INITIAL_ASSISTANT_MESSAGE_ID = "initial-assistant-message"
 const TYPEWRITER_INTERVAL_MS = 18
 const TYPEWRITER_CHARS_PER_STEP = 1
+
+function toUiMessage(message: AgentConversationResponse["messages"][number]): UIMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    parts: [
+      {
+        type: "text",
+        text: message.content,
+      },
+    ],
+  }
+}
+
+function buildInitialMessages(serverConversation: AgentConversationResponse): UIMessage[] {
+  if (serverConversation.messages.length > 0) {
+    return serverConversation.messages.map(toUiMessage)
+  }
+
+  if (serverConversation.openingMessage?.trim()) {
+    return [
+      {
+        id: INITIAL_ASSISTANT_MESSAGE_ID,
+        role: "assistant",
+        parts: [
+          {
+            type: "text",
+            text: serverConversation.openingMessage,
+          },
+        ],
+      },
+    ]
+  }
+
+  return [
+    {
+      id: INITIAL_ASSISTANT_MESSAGE_ID,
+      role: "assistant",
+      parts: [
+        {
+          type: "text",
+          text: "我已经准备好陪你聊天了。你可以直接说今天想聊什么。",
+        },
+      ],
+    },
+  ]
+}
 
 function getMessageText(message: UIMessage) {
   return message.parts
@@ -74,6 +128,24 @@ function getTextLength(text: string) {
 
 function sliceText(text: string, length: number) {
   return Array.from(text).slice(0, length).join("")
+}
+
+function buildVisibleAssistantTextById(messages: UIMessage[]) {
+  const textById: Record<string, string> = {}
+
+  for (const message of messages) {
+    if (message.role !== "assistant" || message.id === INITIAL_ASSISTANT_MESSAGE_ID) {
+      continue
+    }
+
+    const text = getMessageText(message)
+
+    if (text) {
+      textById[message.id] = text
+    }
+  }
+
+  return textById
 }
 
 function formatChatErrorMessage(error: Error) {
@@ -95,12 +167,15 @@ function formatChatErrorMessage(error: Error) {
   return error.message || "聊天请求失败，请检查 LLM 配置。"
 }
 
-function TypingBubble() {
+function TypingBubble({ conversation }: { conversation: ChatConversation }) {
   return (
     <div className="flex w-full items-start gap-3">
-      <span className="mt-6 flex size-9 shrink-0 items-center justify-center rounded-full border border-violet-200 bg-violet-50 text-violet-700">
-        <Bot className="size-4" />
-      </span>
+      <AgentAvatar
+        className="mt-6 size-9 rounded-full border-violet-200 bg-violet-50 text-xs text-violet-700"
+        fallbackClassName="bg-violet-50 text-violet-700"
+        imageKey={conversation.imageKey}
+        name={conversation.name}
+      />
       <div className="flex min-w-0 max-w-[min(34rem,82%)] flex-col gap-1.5">
         <div className="flex items-center gap-2 text-xs font-medium text-violet-700">
           <Sparkles className="size-3.5" />
@@ -121,8 +196,56 @@ function TypingBubble() {
   )
 }
 
-export function InboxChat({ conversation }: InboxChatProps) {
+function InboxChatLoadingPanel({ conversation }: { conversation: ChatConversation }) {
+  return (
+    <section className="flex min-h-0 flex-1 flex-col bg-slate-50/70">
+      <div className="border-b bg-white/90 px-4 py-4 sm:px-6">
+        <div className="flex items-center gap-4">
+          <AgentAvatar
+            className="size-14 rounded-2xl bg-slate-950 text-base text-white"
+            fallbackClassName="bg-slate-950 text-white"
+            imageKey={conversation.imageKey}
+            name={conversation.name}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="h-5 w-44 animate-pulse rounded bg-slate-100" />
+            <div className="mt-3 h-4 w-64 max-w-full animate-pulse rounded bg-slate-100" />
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-1 items-center justify-center px-5 py-8">
+        <div className="text-sm font-medium text-slate-500">正在加载聊天历史...</div>
+      </div>
+    </section>
+  )
+}
+
+function InboxChatErrorPanel({ conversation }: { conversation: ChatConversation }) {
+  return (
+    <section className="flex min-h-0 flex-1 flex-col bg-slate-50/70">
+      <div className="flex flex-1 items-center justify-center px-5 py-8">
+        <div className="w-full max-w-sm text-center">
+          <AgentAvatar
+            className="mx-auto size-12 rounded-2xl bg-slate-100 text-sm text-slate-700"
+            fallbackClassName="bg-slate-100 text-slate-700"
+            imageKey={conversation.imageKey}
+            name={conversation.name}
+          />
+          <h2 className="mt-4 text-base font-semibold text-slate-950">聊天历史加载失败</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            请确认 API 已完成最新 D1 迁移后刷新页面。
+          </p>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function InboxChatInner({ conversation, serverConversation, onConversationUpdated }: InboxChatInnerProps) {
   const [draftMessage, setDraftMessage] = useState("")
+  const [historyMessages, setHistoryMessages] = useState<UIMessage[]>(() => buildInitialMessages(serverConversation))
+  const [nextCursor, setNextCursor] = useState(serverConversation.nextCursor)
+  const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false)
   const [llmStore, setLlmStore] = useState<LocalLlmConfigStore>({ selectedConfigId: null, items: [] })
   const enabledLlmConfigs = llmStore.items.filter((item) => item.enabled)
   const selectedLlmConfig =
@@ -134,6 +257,7 @@ export function InboxChat({ conversation }: InboxChatProps) {
         const storedSession = readClientSession()
         const latestStore = readLocalLlmConfigStore()
         const selectedConfig = latestStore.items.find((item) => item.enabled && item.id === latestStore.selectedConfigId)
+        const requestMessages = messages.slice(-20)
         const localLlmConfig = selectedConfig
           ? {
               providerName: selectedConfig.providerName,
@@ -152,33 +276,25 @@ export function InboxChat({ conversation }: InboxChatProps) {
             : undefined,
           body: {
             ...body,
-            messages,
+            conversationId: serverConversation.conversationId,
+            messages: requestMessages,
             conversation,
             ...(localLlmConfig ? { llmConfig: localLlmConfig } : {}),
           },
         }
       },
     }),
-    [conversation],
+    [conversation, serverConversation.conversationId],
   )
-  const initialMessages: UIMessage[] = [
-    {
-      id: INITIAL_ASSISTANT_MESSAGE_ID,
-      role: "assistant",
-      parts: [
-        {
-          type: "text",
-          text: "我已读取当前聊天对象的资料和上下文，可以帮你自然接话、起草回复或判断下一步节奏。",
-        },
-      ],
-    },
-  ]
-  const { messages, sendMessage, status, error, stop } = useChat({
+  const { messages, sendMessage, status, error, stop, setMessages } = useChat({
+    id: serverConversation.conversationId,
     transport,
-    messages: initialMessages,
+    messages: historyMessages,
   })
   const isSending = status === "submitted" || status === "streaming"
-  const [visibleAssistantTextById, setVisibleAssistantTextById] = useState<Record<string, string>>({})
+  const [visibleAssistantTextById, setVisibleAssistantTextById] = useState<Record<string, string>>(() =>
+    buildVisibleAssistantTextById(historyMessages),
+  )
   const assistantTextSignature = messages
     .filter((message) => message.role === "assistant" && message.id !== INITIAL_ASSISTANT_MESSAGE_ID)
     .map((message) => `${message.id}:${getMessageText(message)}`)
@@ -212,6 +328,45 @@ export function InboxChat({ conversation }: InboxChatProps) {
 
     return getTextLength(visibleText) < getTextLength(fullText)
   })
+  const [hasPendingConversationUpdate, setHasPendingConversationUpdate] = useState(false)
+
+  async function loadMoreHistory() {
+    if (!nextCursor || isLoadingMoreHistory || !conversation.id) {
+      return
+    }
+
+    setIsLoadingMoreHistory(true)
+
+    try {
+      const response = await getAgentConversationMessages(conversation.id, nextCursor)
+      const olderMessages = response.messages.map(toUiMessage)
+
+      setVisibleAssistantTextById((current) => {
+        const next = { ...current }
+        let changed = false
+
+        for (const message of olderMessages) {
+          if (message.role !== "assistant" || message.id === INITIAL_ASSISTANT_MESSAGE_ID) {
+            continue
+          }
+
+          const text = getMessageText(message)
+
+          if (text && next[message.id] !== text) {
+            next[message.id] = text
+            changed = true
+          }
+        }
+
+        return changed ? next : current
+      })
+      setHistoryMessages((current) => [...olderMessages, ...current])
+      setMessages((current) => [...olderMessages, ...current])
+      setNextCursor(response.nextCursor)
+    } finally {
+      setIsLoadingMoreHistory(false)
+    }
+  }
 
   useEffect(() => {
     function reloadLlmStore() {
@@ -281,18 +436,32 @@ export function InboxChat({ conversation }: InboxChatProps) {
     return () => window.clearTimeout(timer)
   }, [assistantFullTextById, hasTypewriterWork, visibleAssistantTextById])
 
+  useEffect(() => {
+    if (status === "submitted" || status === "streaming") {
+      setHasPendingConversationUpdate(true)
+      return
+    }
+
+    if (!hasPendingConversationUpdate) {
+      return
+    }
+
+    setHasPendingConversationUpdate(false)
+    onConversationUpdated?.()
+  }, [hasPendingConversationUpdate, onConversationUpdated, status])
+
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-[radial-gradient(circle_at_top_left,rgba(99,102,241,0.08),transparent_32rem),linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)]">
       <div className="border-b bg-white/90 px-4 py-4 backdrop-blur sm:px-6">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex min-w-0 items-center gap-4">
-            <span className="relative flex size-14 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-950 text-base font-semibold text-white">
-              {conversation.name
-                .split(" ")
-                .map((part) => part[0])
-                .join("")
-                .slice(0, 2)
-                .toUpperCase()}
+            <span className="relative shrink-0">
+              <AgentAvatar
+                className="size-14 rounded-2xl bg-slate-950 text-base text-white"
+                fallbackClassName="bg-slate-950 text-white"
+                imageKey={conversation.imageKey}
+                name={conversation.name}
+              />
               <span className="absolute -right-0.5 -top-0.5 size-3.5 rounded-full border-2 border-white bg-emerald-500" />
             </span>
             <div className="min-w-0">
@@ -369,10 +538,24 @@ export function InboxChat({ conversation }: InboxChatProps) {
       <Conversation className="min-h-0">
         <ConversationContent className="mx-auto w-full max-w-4xl gap-6 px-4 py-6 sm:px-6">
           <div className="flex items-center justify-center">
-            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600">
-              <Bot className="size-3.5 text-violet-600" />
-              Assistant is using the selected chat context
-            </div>
+            {nextCursor ? (
+              <button
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isLoadingMoreHistory}
+                onClick={() => {
+                  void loadMoreHistory()
+                }}
+                type="button"
+              >
+                <Clock3 className="size-3.5 text-slate-500" />
+                {isLoadingMoreHistory ? "正在加载历史" : "加载更早消息"}
+              </button>
+            ) : (
+              <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600">
+                <Sparkles className="size-3.5 text-violet-600" />
+                Assistant is using saved chat memory
+              </div>
+            )}
           </div>
 
           {messages.map((message) => {
@@ -396,9 +579,12 @@ export function InboxChat({ conversation }: InboxChatProps) {
                 key={message.id}
               >
                 {!isUser ? (
-                  <span className="mt-6 flex size-9 shrink-0 items-center justify-center rounded-full border border-violet-200 bg-violet-50 text-violet-700">
-                    <Bot className="size-4" />
-                  </span>
+                  <AgentAvatar
+                    className="mt-6 size-9 rounded-full border-violet-200 bg-violet-50 text-xs text-violet-700"
+                    fallbackClassName="bg-violet-50 text-violet-700"
+                    imageKey={conversation.imageKey}
+                    name={conversation.name}
+                  />
                 ) : null}
 
                 <div
@@ -444,7 +630,7 @@ export function InboxChat({ conversation }: InboxChatProps) {
               </div>
             )
           })}
-          {shouldShowTypingBubble ? <TypingBubble /> : null}
+          {shouldShowTypingBubble ? <TypingBubble conversation={conversation} /> : null}
           {error ? (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-destructive">
               {formatChatErrorMessage(error)}
@@ -541,5 +727,34 @@ export function InboxChat({ conversation }: InboxChatProps) {
         </PromptInput>
       </div>
     </section>
+  )
+}
+
+export function InboxChat({ conversation, onConversationUpdated }: InboxChatProps) {
+  const queryClient = useQueryClient()
+  const conversationQuery = useQuery({
+    queryKey: ["agent-conversation", conversation.id],
+    queryFn: () => getAgentConversation(conversation.id ?? ""),
+    enabled: Boolean(conversation.id),
+  })
+
+  if (conversationQuery.isLoading) {
+    return <InboxChatLoadingPanel conversation={conversation} />
+  }
+
+  if (conversationQuery.isError || !conversationQuery.data) {
+    return <InboxChatErrorPanel conversation={conversation} />
+  }
+
+  return (
+    <InboxChatInner
+      conversation={conversation}
+      key={conversationQuery.data.conversationId}
+      onConversationUpdated={() => {
+        void queryClient.invalidateQueries({ queryKey: ["agent-conversation", conversation.id] })
+        onConversationUpdated?.()
+      }}
+      serverConversation={conversationQuery.data}
+    />
   )
 }

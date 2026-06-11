@@ -179,4 +179,17 @@ export const http = {
       data,
     }))
   },
+  patch<TResponse, TRequest = unknown>(url: string, data?: TRequest, config?: AxiosRequestConfig): Promise<TResponse> {
+    return request<TResponse>(createRequestConfig(url, {
+      ...config,
+      method: 'PATCH',
+      data,
+    }))
+  },
+  delete<TResponse>(url: string, config?: AxiosRequestConfig): Promise<TResponse> {
+    return request<TResponse>(createRequestConfig(url, {
+      ...config,
+      method: 'DELETE',
+    }))
+  },
 }

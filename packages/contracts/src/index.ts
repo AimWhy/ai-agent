@@ -61,11 +61,45 @@ export type {
   WebTokenRefreshResponse,
 } from './auth/web-token-refresh.contract'
 export {
+  CreateMyAgentCompanionRequestSchema,
+  CreateMyAgentCompanionResponseSchema,
+  AgentMemorySchema,
+  MyAgentCompanionDetailResponseSchema,
+  MyAgentInboxItemSchema,
+  MyAgentInboxResponseSchema,
+  MyAgentMemoriesResponseSchema,
+  MyAgentSummaryResponseSchema,
+  UpdateAgentMemoryRequestSchema,
+  UpdateAgentMemoryResponseSchema,
+  UpdateMyAgentCompanionRequestSchema,
+  UpdateMyAgentCompanionResponseSchema,
+  UploadMyAgentCompanionImageResponseSchema,
+} from './agent/my-summary.contract'
+export type {
+  CreateMyAgentCompanionRequest,
+  CreateMyAgentCompanionResponse,
+  AgentMemory,
+  MyAgentCompanionDetailResponse,
+  MyAgentInboxItem,
+  MyAgentInboxResponse,
+  MyAgentMemoriesResponse,
+  MyAgentSummaryResponse,
+  UpdateAgentMemoryRequest,
+  UpdateAgentMemoryResponse,
+  UpdateMyAgentCompanionRequest,
+  UpdateMyAgentCompanionResponse,
+  UploadMyAgentCompanionImageResponse,
+} from './agent/my-summary.contract'
+export {
   InboxChatMessageSchema,
   InboxChatLlmConfigSchema,
   InboxChatLlmReasoningEffortSchema,
   InboxChatLlmWireApiSchema,
   InboxChatRequestSchema,
+  AgentConversationMessageRoleSchema,
+  AgentConversationMessageSchema,
+  AgentConversationMessagesResponseSchema,
+  AgentConversationResponseSchema,
 } from './chat/inbox-chat.contract'
 export type {
   InboxChatMessage,
@@ -73,6 +107,10 @@ export type {
   InboxChatLlmReasoningEffort,
   InboxChatLlmWireApi,
   InboxChatRequest,
+  AgentConversationMessageRole,
+  AgentConversationMessage,
+  AgentConversationMessagesResponse,
+  AgentConversationResponse,
 } from './chat/inbox-chat.contract'
 export {
   BizCode,
@@ -239,6 +277,42 @@ export type {
   AssignSubscriptionUserRequest,
   AssignSubscriptionUserResponse,
 } from './subscription-user/assign.contract'
+export {
+  CreateFinancialBillRequestSchema,
+  CreateFinancialBillResponseSchema,
+} from './financial-bill/create.contract'
+export type {
+  CreateFinancialBillRequest,
+  CreateFinancialBillResponse,
+} from './financial-bill/create.contract'
+export {
+  UpdateFinancialBillRequestSchema,
+  UpdateFinancialBillResponseSchema,
+} from './financial-bill/update.contract'
+export type {
+  UpdateFinancialBillRequest,
+  UpdateFinancialBillResponse,
+} from './financial-bill/update.contract'
+export {
+  DeleteFinancialBillRequestSchema,
+  DeleteFinancialBillResponseSchema,
+} from './financial-bill/delete.contract'
+export type {
+  DeleteFinancialBillRequest,
+  DeleteFinancialBillResponse,
+} from './financial-bill/delete.contract'
+export {
+  FinancialBillListItemSchema,
+  FinancialBillListQuerySchema,
+  FinancialBillListResponseSchema,
+  FinancialBillMonthSchema,
+} from './financial-bill/list.contract'
+export type {
+  FinancialBillListItem,
+  FinancialBillListQuery,
+  FinancialBillListResponse,
+  FinancialBillMonth,
+} from './financial-bill/list.contract'
 export {
   OrderDetailRequestSchema,
   OrderDetailResponseSchema,

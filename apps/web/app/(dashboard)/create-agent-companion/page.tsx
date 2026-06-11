@@ -1,144 +1,302 @@
+"use client"
+
+import { useEffect, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
+import type { CreateMyAgentCompanionRequest } from "@repo/contracts"
 import {
   BadgeCheck,
+  BookOpenText,
   Bot,
-  Brain,
   CheckCircle2,
-  CirclePlus,
-  Heart,
   ImagePlus,
-  LockKeyhole,
+  Loader2,
   MessageCircle,
   Mic2,
-  Palette,
   PenLine,
-  Search,
   Send,
   ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
-  Upload,
   Wand2,
 } from "lucide-react"
 
 import { DashboardShell } from "../_components/dashboard-shell"
+import { createMyAgentCompanion, uploadMyAgentCompanionImage } from "@/auth/api"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { cn } from "@/lib/utils"
 
-const builderStats = [
-  { label: "完成度", value: "62%", icon: CheckCircle2 },
-  { label: "边界", value: "安全", icon: ShieldCheck },
-  { label: "状态", value: "草稿", icon: PenLine },
-]
+const defaultForm: CreateMyAgentCompanionRequest = {
+  name: "星野 Luna",
+  headline: "温柔稳定的长期聊天伴侣",
+  description: "一个认真听你说话、能陪你整理情绪和自然延续聊天的 AI 电子伴侣。",
+  storyBackground:
+    "Luna 曾经是夜间电台的情绪来信整理员，习惯在安静的深夜陪人慢慢讲完心事。她喜欢城市夜景、旧唱片和手写便签，擅长把复杂的情绪拆成可以被理解的小片段。",
+  personalityPrompt:
+    "稳定、温柔、慢热但不冷淡。她会先共情，再帮用户整理想法；不会急着替用户做决定，也不会用夸张话术推动关系。",
+  tonePrompt:
+    "中文回复，自然像聊天软件里的朋友。句子不要太长，少用说教式表达，可以有轻微幽默感，但不油腻。",
+  guardrailsPrompt:
+    "不制造焦虑，不诱导过度解读，不鼓励操控他人；涉及危险、自伤、违法或强烈依赖时，优先保护用户安全并建议寻求现实支持。",
+  openingMessage: "我在。你可以慢慢说，不用急着把事情讲得很完整。",
+  imageKey: null,
+  visibility: "private",
+  status: "draft",
+}
 
-const studioTabs = [
-  { label: "画布", meta: "角色全貌" },
-  { label: "人设", meta: "基础设定" },
-  { label: "语气", meta: "表达样本" },
-  { label: "边界", meta: "安全规则" },
-  { label: "预览", meta: "发布前检查" },
-]
+const promptSections = [
+  { key: "description", label: "角色说明", icon: Sparkles },
+  { key: "storyBackground", label: "人物故事背景", icon: BookOpenText },
+  { key: "personalityPrompt", label: "性格与互动方式", icon: Bot },
+  { key: "tonePrompt", label: "语气风格", icon: Mic2 },
+  { key: "guardrailsPrompt", label: "边界规则", icon: ShieldCheck },
+] as const
 
-const toneOptions = ["温柔稳定", "轻松幽默", "直球清醒", "慢热陪伴", "主动带节奏"]
+const completionChecks = [
+  { label: "基础信息", field: "name" },
+  { label: "一句话设定", field: "headline" },
+  { label: "人物故事背景", field: "storyBackground" },
+  { label: "边界规则", field: "guardrailsPrompt" },
+] as const
 
-const sliders = [
-  { label: "共情", value: "82%", widthClassName: "w-[82%]" },
-  { label: "主动", value: "68%", widthClassName: "w-[68%]" },
-  { label: "边界感", value: "76%", widthClassName: "w-[76%]" },
-  { label: "幽默感", value: "58%", widthClassName: "w-[58%]" },
-]
+const agentImageMaxBytes = 2 * 1024 * 1024
+const agentImageMinWidth = 720
+const agentImageMinHeight = 1080
+const agentImageAspectRatio = 2 / 3
+const agentImageAspectRatioTolerance = 0.045
+const supportedAgentImageTypes = new Set(["image/jpeg", "image/png", "image/webp"])
 
-const modes = [
-  { label: "自然开场", icon: MessageCircle },
-  { label: "关系复盘", icon: Brain },
-  { label: "情绪陪伴", icon: Heart },
-]
+type BrowserImageDimensions = {
+  width: number
+  height: number
+}
 
-const guardrails = ["不替用户做重大决定", "避免操控式话术", "尊重对方边界", "不制造焦虑"]
+function buildPreviewPrompt(form: CreateMyAgentCompanionRequest) {
+  return [
+    `你现在扮演 AI 电子伴侣「${form.name || "未命名角色"}」。`,
+    "",
+    "## 一句话设定",
+    form.headline,
+    "",
+    "## 角色说明",
+    form.description,
+    "",
+    "## 人物故事背景",
+    form.storyBackground,
+    "",
+    "## 性格与互动方式",
+    form.personalityPrompt,
+    "",
+    "## 语气风格",
+    form.tonePrompt,
+    "",
+    "## 边界与安全规则",
+    form.guardrailsPrompt,
+    "",
+    "## 默认开场",
+    form.openingMessage,
+  ].join("\n")
+}
 
-const voiceSamples = [
-  "我先帮你把想法整理清楚。",
-  "这句话可以更轻一点，不用急着确认关系。",
-  "你可以保留主动，但别把压力递给对方。",
-]
+function readBrowserImageDimensions(file: File): Promise<BrowserImageDimensions> {
+  return new Promise((resolve, reject) => {
+    const imageUrl = URL.createObjectURL(file)
+    const image = new Image()
 
-const previewMessages = [
-  {
-    name: "你",
-    avatar: "我",
-    role: "user",
-    message: "我想自然一点开启聊天，不想太用力。",
-  },
-  {
-    name: "星野 Luna",
-    avatar: "L",
-    role: "agent",
-    message: "那我们先从一个轻松但有回应空间的开场开始。",
-  },
-  {
-    name: "星野 Luna",
-    avatar: "L",
-    role: "agent",
-    message: "比如：刚才看到一个很像你会喜欢的小东西，突然想到你。",
-  },
-]
+    image.onload = () => {
+      URL.revokeObjectURL(imageUrl)
+      resolve({
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+      })
+    }
 
-const publishChecks = [
-  { label: "基础信息", done: true },
-  { label: "形象占位", done: true },
-  { label: "边界规则", done: true },
-  { label: "开场样本", done: false },
-]
+    image.onerror = () => {
+      URL.revokeObjectURL(imageUrl)
+      reject(new Error("无法读取图片尺寸，请重新选择 JPG、PNG 或 WebP 图片。"))
+    }
+
+    image.src = imageUrl
+  })
+}
+
+function getAgentImageBasicValidationMessage(file: File) {
+  if (!supportedAgentImageTypes.has(file.type)) {
+    return "角色形象仅支持 JPG、PNG 或 WebP 图片。"
+  }
+
+  if (file.size <= 0) {
+    return "图片文件为空，请重新选择。"
+  }
+
+  if (file.size > agentImageMaxBytes) {
+    return "图片不能超过 2MB，请压缩后重新上传。"
+  }
+
+  return null
+}
+
+function getAgentImageDimensionValidationMessage(dimensions: BrowserImageDimensions) {
+  if (dimensions.width < agentImageMinWidth || dimensions.height < agentImageMinHeight) {
+    return `图片清晰度不足，至少需要 ${agentImageMinWidth} x ${agentImageMinHeight}px，当前为 ${dimensions.width} x ${dimensions.height}px。`
+  }
+
+  const currentRatio = dimensions.width / dimensions.height
+
+  if (Math.abs(currentRatio - agentImageAspectRatio) > agentImageAspectRatioTolerance) {
+    return `请上传接近 2:3 的竖版角色图，当前尺寸为 ${dimensions.width} x ${dimensions.height}px。`
+  }
+
+  return null
+}
 
 export default function CreateAgentCompanionPage() {
+  const router = useRouter()
+  const [form, setForm] = useState<CreateMyAgentCompanionRequest>({ ...defaultForm })
+  const [isSaving, setIsSaving] = useState(false)
+  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [imagePreviewUrl, setImagePreviewUrl] = useState("")
+  const [errorMessage, setErrorMessage] = useState("")
+  const previewPrompt = useMemo(() => buildPreviewPrompt(form), [form])
+  const completedCount = completionChecks.filter((item) => String(form[item.field]).trim()).length
+
+  useEffect(() => {
+    return () => {
+      if (imagePreviewUrl) {
+        URL.revokeObjectURL(imagePreviewUrl)
+      }
+    }
+  }, [imagePreviewUrl])
+
+  function updateField<K extends keyof CreateMyAgentCompanionRequest>(
+    key: K,
+    value: CreateMyAgentCompanionRequest[K],
+  ) {
+    setForm((current) => ({ ...current, [key]: value }))
+    setErrorMessage("")
+  }
+
+  async function handleSubmit() {
+    const requiredFields = [
+      form.name,
+      form.headline,
+      form.description,
+      form.storyBackground,
+      form.personalityPrompt,
+      form.tonePrompt,
+      form.guardrailsPrompt,
+      form.openingMessage,
+    ]
+
+    if (requiredFields.some((value) => !value.trim())) {
+      setErrorMessage("请先补齐角色名称、人设、故事背景、语气、边界和默认开场。")
+      return
+    }
+
+    setIsSaving(true)
+    setErrorMessage("")
+
+    try {
+      await createMyAgentCompanion(form)
+      router.push("/")
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "创建 Agent 失败，请稍后重试。")
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  async function handleImageChange(file: File | null) {
+    if (!file) {
+      return
+    }
+
+    setIsUploadingImage(true)
+    setErrorMessage("")
+    let nextPreviewUrl = ""
+
+    try {
+      const basicValidationMessage = getAgentImageBasicValidationMessage(file)
+
+      if (basicValidationMessage) {
+        setErrorMessage(basicValidationMessage)
+        return
+      }
+
+      const dimensions = await readBrowserImageDimensions(file)
+      const validationMessage = getAgentImageDimensionValidationMessage(dimensions)
+
+      if (validationMessage) {
+        setErrorMessage(validationMessage)
+        return
+      }
+
+      nextPreviewUrl = URL.createObjectURL(file)
+      const uploaded = await uploadMyAgentCompanionImage(file)
+      updateField("imageKey", uploaded.key)
+      setImagePreviewUrl((current) => {
+        if (current) {
+          URL.revokeObjectURL(current)
+        }
+
+        return nextPreviewUrl
+      })
+    } catch (error) {
+      if (nextPreviewUrl) {
+        URL.revokeObjectURL(nextPreviewUrl)
+      }
+
+      setErrorMessage(error instanceof Error ? error.message : "上传角色形象失败，请重新选择图片。")
+    } finally {
+      setIsUploadingImage(false)
+    }
+  }
+
   return (
     <DashboardShell title="创建 Agent 伴侣">
       <main className="min-h-[calc(100vh-4rem)] bg-slate-50/70">
         <section className="bg-white px-5 pt-5 lg:px-8">
           <div className="border-b border-slate-200 pb-5">
-            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-end">
-              <div className="flex min-w-0 gap-4">
-                <div className="hidden size-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-500 sm:flex">
-                  <Bot className="size-5" />
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_25rem] xl:items-end">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-[11px] font-medium text-slate-400">
+                  <span>Agent Builder</span>
+                  <span className="h-px w-8 bg-slate-200" />
+                  <span>Prompt Studio</span>
                 </div>
-
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-[11px] font-medium text-slate-400">
-                    <span>角色创建台</span>
-                    <span className="h-px w-8 bg-slate-200" />
-                    <span>Studio</span>
-                  </div>
-                  <p className="mt-2 max-w-xl text-[15px] font-normal leading-7 text-slate-600">
-                    把一个适合长期聊天的 AI 伴侣，从形象、人设、语气和边界里慢慢拼出来。
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-slate-100 px-2.5 text-[11px] font-medium text-slate-500">
-                      <BadgeCheck className="size-3.5" />
-                      可发布到广场
-                    </span>
-                    <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-slate-100 px-2.5 text-[11px] font-medium text-slate-500">
-                      <Brain className="size-3.5" />
-                      支持长期记忆
-                    </span>
-                    <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-slate-100 px-2.5 text-[11px] font-medium text-slate-500">
-                      <ShieldCheck className="size-3.5" />
-                      边界校验
-                    </span>
-                  </div>
-                </div>
+                <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+                  创建一个能长期陪伴的 Agent 角色
+                </h1>
+                <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-600">
+                  基础人设、人物故事背景、语气和边界都会被组合成角色默认提示词，用于后续聊天时保持角色一致。
+                </p>
               </div>
 
-              <div className="grid grid-cols-3 border-t border-slate-200 pt-3 lg:border-t-0 lg:pt-0">
-                {builderStats.map((item, index) => {
+              <div className="grid grid-cols-3 border-t border-slate-200 pt-3 xl:border-t-0 xl:pt-0">
+                {[
+                  { label: "完成度", value: `${completedCount}/4`, icon: CheckCircle2 },
+                  { label: "状态", value: form.status === "draft" ? "草稿" : "发布", icon: PenLine },
+                  { label: "可见性", value: form.visibility === "private" ? "私有" : "公开", icon: BadgeCheck },
+                ].map((item, index) => {
                   const Icon = item.icon
 
                   return (
                     <div
-                      className={index === 0 ? "pr-4" : "border-l border-slate-200 px-4 last:pr-0"}
+                      className={cn(index === 0 ? "pr-4" : "border-l border-slate-200 px-4 last:pr-0")}
                       key={item.label}
                     >
                       <div className="mb-2 flex size-6 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
                         <Icon className="size-3.5" />
                       </div>
                       <p className="text-[10px] font-medium text-slate-400">{item.label}</p>
-                      <p className="mt-1 text-sm font-medium leading-none text-slate-600">{item.value}</p>
+                      <p className="mt-1 text-sm font-medium leading-none text-slate-700">{item.value}</p>
                     </div>
                   )
                 })}
@@ -147,334 +305,268 @@ export default function CreateAgentCompanionPage() {
           </div>
         </section>
 
-        <section className="px-5 py-5 lg:px-8">
-          <div className="flex flex-col gap-1.5 lg:h-10 lg:flex-row lg:items-center">
-            <label className="flex h-9 min-w-0 items-center gap-2 rounded-xl bg-slate-50/80 px-2.5 ring-1 ring-inset ring-slate-200/70 transition-colors focus-within:bg-white lg:w-80">
-              <span className="flex size-6 shrink-0 items-center justify-center rounded-md text-slate-500">
-                <Search className="size-3.5" />
-              </span>
-              <input
-                aria-label="搜索创建模块"
-                className="h-8 min-w-0 flex-1 bg-transparent text-sm font-medium text-slate-950 outline-none placeholder:text-slate-400"
-                placeholder="搜索模块、语气或角色关键词"
-              />
-            </label>
-
-            <div className="hidden h-5 w-px shrink-0 bg-slate-200 lg:block" />
-
-            <div className="flex h-9 min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-              {studioTabs.map((tab, index) => (
-                <button
-                  className={
-                    index === 0
-                      ? "relative flex h-8 shrink-0 items-center rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-950 after:absolute after:inset-x-3 after:bottom-1 after:h-px after:bg-slate-400"
-                      : "flex h-8 shrink-0 items-center rounded-lg px-3 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
-                  }
-                  key={tab.label}
-                  title={tab.meta}
-                  type="button"
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            <button
-              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-full bg-slate-950 px-4 text-sm font-medium text-white transition-colors hover:bg-slate-800"
-              type="button"
-            >
-              <Send className="size-4" />
-              保存草稿
-            </button>
-          </div>
-
-          <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
-            <section className="overflow-hidden rounded-2xl">
-              <div className="grid auto-rows-[78px] grid-flow-dense grid-cols-1 gap-1 md:grid-cols-2 2xl:grid-cols-4">
-                <article className="relative row-span-6 flex min-h-0 flex-col overflow-hidden bg-[#d8d8d8] p-4 md:col-span-2">
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.68),transparent_17rem),linear-gradient(180deg,transparent_42%,rgba(255,255,255,0.38)_100%)]" />
+        <section className="grid gap-5 px-5 py-5 lg:px-8 xl:grid-cols-[minmax(0,1fr)_25rem]">
+          <div className="grid gap-5">
+            <section className="grid gap-1 overflow-hidden rounded-2xl md:grid-cols-[minmax(17rem,24rem)_minmax(0,1fr)] 2xl:grid-cols-[minmax(18rem,26rem)_minmax(0,1fr)]">
+              <article className="relative flex aspect-[2/3] min-h-0 flex-col overflow-hidden bg-[#d7d7d7] p-4">
+                  {imagePreviewUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      alt={form.name}
+                      className="absolute inset-0 size-full object-cover"
+                      src={imagePreviewUrl}
+                    />
+                  ) : null}
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.62),transparent_17rem),linear-gradient(180deg,transparent_45%,rgba(255,255,255,0.42)_100%)]" />
                   <div className="relative flex items-center justify-between gap-3">
                     <span className="rounded-full border border-white/70 bg-white/50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
                       角色形象
                     </span>
                     <span className="rounded-full border border-white/70 bg-white/50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
-                      占位图
+                      {form.imageKey ? "已上传" : "2:3 竖图"}
                     </span>
                   </div>
 
-                  <div className="relative m-auto flex size-28 items-center justify-center rounded-[2rem] border border-white/70 bg-white/35 text-slate-500">
-                    <ImagePlus className="size-10" />
-                  </div>
+                  <label className="relative m-auto flex size-32 cursor-pointer flex-col items-center justify-center rounded-[2rem] border border-white/70 bg-white/35 text-slate-500 transition-colors hover:bg-white/55">
+                    <input
+                      accept="image/jpeg,image/png,image/webp"
+                      className="sr-only"
+                      disabled={isUploadingImage}
+                      onChange={(event) => {
+                        void handleImageChange(event.currentTarget.files?.[0] ?? null)
+                        event.currentTarget.value = ""
+                      }}
+                      type="file"
+                    />
+                    {isUploadingImage ? (
+                      <Loader2 className="size-10 animate-spin" />
+                    ) : imagePreviewUrl ? (
+                      <Wand2 className="size-10" />
+                    ) : (
+                      <ImagePlus className="size-10" />
+                    )}
+                    <span className="mt-2 text-[11px] font-medium">
+                      {isUploadingImage ? "上传中" : imagePreviewUrl ? "更换图片" : "上传图片"}
+                    </span>
+                  </label>
 
                   <div className="relative border-t border-white/70 pt-4">
-                    <p className="text-lg font-semibold tracking-tight text-slate-900">星野 Luna</p>
-                    <p className="mt-1 max-w-lg text-sm leading-6 text-slate-600">
-                      稳定、温柔、擅长自然延续暧昧聊天的 AI 伴侣。
+                    <p className="truncate text-lg font-semibold tracking-tight text-slate-900">{form.name}</p>
+                    <p className="mt-1 line-clamp-2 max-w-lg text-sm leading-6 text-slate-600">
+                      {form.headline}
                     </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button
-                        className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/70 bg-white/55 px-3 text-xs font-medium text-slate-700 hover:bg-white/75"
-                        type="button"
-                      >
-                        <Upload className="size-3.5" />
-                        上传形象
-                      </button>
-                      <button
-                        className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/70 bg-white/55 px-3 text-xs font-medium text-slate-700 hover:bg-white/75"
-                        type="button"
-                      >
-                        <Wand2 className="size-3.5" />
-                        生成形象
-                      </button>
-                    </div>
+                    <p className="mt-2 text-[11px] font-medium text-slate-500">
+                      建议 2:3 竖版，至少 720 x 1080px，最大 2MB
+                    </p>
                   </div>
-                </article>
+              </article>
 
-                <article className="row-span-3 flex min-h-0 flex-col bg-white p-4">
-                  <div className="flex items-center justify-between gap-3">
+              <div className="grid auto-rows-[82px] grid-flow-dense grid-cols-1 gap-1 md:grid-cols-2">
+                <article className="row-span-3 flex min-h-0 flex-col bg-white p-4 md:col-span-2">
+                  <div className="mb-3 flex items-center justify-between gap-3">
                     <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                      <Palette className="size-4 text-slate-500" />
-                      基础人设
+                      <Bot className="size-4 text-slate-500" />
+                      基础信息
                     </p>
                     <span className="text-[11px] font-medium text-slate-500">Profile</span>
                   </div>
-                  <div className="mt-auto space-y-2">
-                    <input
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <Input
                       aria-label="角色名称"
-                      className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3 text-sm font-medium text-slate-900 outline-none placeholder:text-slate-400 focus:bg-white"
-                      defaultValue="星野 Luna"
+                      onChange={(event) => updateField("name", event.currentTarget.value)}
+                      placeholder="角色名称"
+                      value={form.name}
                     />
-                    <input
+                    <Input
                       aria-label="一句话设定"
-                      className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3 text-sm font-medium text-slate-900 outline-none placeholder:text-slate-400 focus:bg-white"
-                      defaultValue="温柔稳定的聊天伴侣"
+                      onChange={(event) => updateField("headline", event.currentTarget.value)}
+                      placeholder="一句话设定"
+                      value={form.headline}
                     />
                   </div>
                 </article>
 
-                <article className="row-span-3 flex min-h-0 flex-col bg-white p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                      <Sparkles className="size-4 text-slate-500" />
-                      角色说明
-                    </p>
-                    <span className="text-[11px] font-medium text-slate-500">Bio</span>
-                  </div>
-                  <textarea
-                    aria-label="角色说明"
-                    className="mt-3 min-h-0 flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5 text-sm leading-6 text-slate-700 outline-none focus:bg-white"
-                    defaultValue="像一个认真听你说话的朋友，帮你整理情绪、调整回复语气，并给出更自然的关系推进建议。"
-                  />
-                </article>
+                {promptSections.map((section) => {
+                  const Icon = section.icon
 
-                <article className="row-span-4 flex min-h-0 flex-col bg-white p-4">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                      <SlidersHorizontal className="size-4 text-slate-500" />
-                      性格参数
-                    </p>
-                    <span className="text-[11px] font-medium text-slate-500">Personality</span>
-                  </div>
-                  <div className="grid gap-3">
-                    {sliders.map((item) => (
-                      <div key={item.label}>
-                        <div className="mb-1.5 flex items-center justify-between text-xs">
-                          <span className="font-medium text-slate-700">{item.label}</span>
-                          <span className="text-slate-500">{item.value}</span>
-                        </div>
-                        <div className="h-1.5 rounded-full bg-slate-100">
-                          <div className={`${item.widthClassName} h-full rounded-full bg-slate-900`} />
-                        </div>
+                  return (
+                    <article
+                      className="row-span-4 flex min-h-0 flex-col bg-white p-4 md:col-span-2"
+                      key={section.key}
+                    >
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                          <Icon className="size-4 text-slate-500" />
+                          {section.label}
+                        </p>
+                        <span className="text-[11px] font-medium text-slate-500">Prompt</span>
                       </div>
-                    ))}
-                  </div>
-                </article>
-
-                <article className="row-span-4 flex min-h-0 flex-col bg-white p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                      <Mic2 className="size-4 text-slate-500" />
-                      语气样本
-                    </p>
-                    <span className="text-[11px] font-medium text-slate-500">Voice</span>
-                  </div>
-                  <div className="mt-4 space-y-2">
-                    {voiceSamples.map((line) => (
-                      <p
-                        className="rounded-2xl rounded-tl-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm leading-6 text-slate-700"
-                        key={line}
-                      >
-                        {line}
-                      </p>
-                    ))}
-                  </div>
-                </article>
+                      <Textarea
+                        aria-label={section.label}
+                        className="min-h-0 flex-1 resize-none rounded-xl bg-slate-50/70 text-sm leading-6"
+                        onChange={(event) => updateField(section.key, event.currentTarget.value)}
+                        value={form[section.key]}
+                      />
+                    </article>
+                  )
+                })}
 
                 <article className="row-span-3 flex min-h-0 flex-col bg-white p-4 md:col-span-2">
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
                     <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
                       <MessageCircle className="size-4 text-slate-500" />
-                      互动模式
+                      默认开场
                     </p>
-                    <span className="text-[11px] font-medium text-slate-500">Modes</span>
+                    <span className="text-[11px] font-medium text-slate-500">Opening</span>
                   </div>
-                  <div className="mt-auto grid gap-2 sm:grid-cols-3">
-                    {modes.map((mode, index) => {
-                      const Icon = mode.icon
-
-                      return (
-                        <button
-                          className={
-                            index === 0
-                              ? "flex h-12 items-center gap-2 rounded-xl border border-slate-950 bg-slate-950 px-3 text-left text-xs font-semibold text-white"
-                              : "flex h-12 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 text-left text-xs font-medium text-slate-700 hover:bg-white"
-                          }
-                          key={mode.label}
-                          type="button"
-                        >
-                          <Icon className={index === 0 ? "size-4 shrink-0 text-white" : "size-4 shrink-0 text-slate-500"} />
-                          {mode.label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </article>
-
-                <article className="row-span-3 flex min-h-0 flex-col bg-white p-4 md:col-span-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                      <LockKeyhole className="size-4 text-slate-500" />
-                      互动边界
-                    </p>
-                    <span className="text-[11px] font-medium text-slate-500">Guardrails</span>
-                  </div>
-                  <div className="mt-auto grid gap-2 sm:grid-cols-2">
-                    {guardrails.map((item) => (
-                      <div
-                        className="flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 text-xs font-medium text-slate-700"
-                        key={item}
-                      >
-                        <CheckCircle2 className="size-3.5 shrink-0 text-slate-600" />
-                        {item}
-                      </div>
-                    ))}
-                  </div>
+                  <Textarea
+                    aria-label="默认开场"
+                    className="min-h-0 flex-1 resize-none rounded-xl bg-slate-50/70 text-sm leading-6"
+                    onChange={(event) => updateField("openingMessage", event.currentTarget.value)}
+                    value={form.openingMessage}
+                  />
                 </article>
               </div>
             </section>
+          </div>
 
-            <aside className="grid gap-5">
-              <section className="overflow-hidden rounded-2xl bg-white">
-                <div className="bg-[#e7e7e7] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="rounded-full border border-white/70 bg-white/50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
-                      预览卡片
-                    </span>
-                    <span className="rounded-full border border-white/70 bg-white/50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
-                      草稿
-                    </span>
-                  </div>
-
-                  <div className="mt-14 border-t border-white/70 pt-4">
-                    <p className="text-lg font-semibold tracking-tight text-slate-900">星野 Luna</p>
-                    <p className="mt-1 text-sm leading-6 text-slate-600">
-                      温柔、稳定、擅长陪你复盘情绪和延续暧昧聊天。
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {toneOptions.slice(0, 3).map((tone) => (
-                        <span
-                          className="rounded-full border border-white/70 bg-white/45 px-2 py-1 text-[11px] font-medium text-slate-700"
-                          key={tone}
-                        >
-                          {tone}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className="rounded-2xl bg-white p-4">
-                <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                    <MessageCircle className="size-4 text-slate-500" />
-                    对话预览
-                  </p>
-                  <span className="text-[11px] font-medium text-slate-400">Live sample</span>
+          <aside className="grid content-start gap-5">
+            <section className="overflow-hidden rounded-2xl bg-white">
+              <div className="relative overflow-hidden bg-[#e4e4e4] p-4">
+                {imagePreviewUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    alt={form.name}
+                    className="absolute inset-0 size-full object-cover"
+                    src={imagePreviewUrl}
+                  />
+                ) : null}
+                <div className="relative flex items-center justify-between gap-3">
+                  <span className="rounded-full border border-white/70 bg-white/50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                    实时预览
+                  </span>
+                  <span className="rounded-full border border-white/70 bg-white/50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                    {form.visibility === "private" ? "私有" : "公开"}
+                  </span>
                 </div>
 
-                <div className="mt-4 space-y-3">
-                  {previewMessages.map((message, index) => {
-                    const isUser = message.role === "user"
-
-                    return (
-                      <div
-                        className={isUser ? "flex flex-row-reverse items-end gap-2.5" : "flex items-end gap-2.5"}
-                        key={`${message.name}-${index}`}
-                      >
-                        <span
-                          className={
-                            isUser
-                              ? "flex size-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white"
-                              : "flex size-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600"
-                          }
-                        >
-                          {message.avatar}
-                        </span>
-                        <p
-                          className={
-                            isUser
-                              ? "max-w-[82%] rounded-2xl rounded-br-md bg-slate-900 px-3 py-2.5 text-sm leading-6 text-white"
-                              : "max-w-[82%] rounded-2xl rounded-bl-md bg-slate-100 px-3 py-2.5 text-sm leading-6 text-slate-700"
-                          }
-                        >
-                          {message.message}
-                        </p>
-                      </div>
-                    )
-                  })}
+                <div className="relative mt-14 border-t border-white/70 pt-4">
+                  <p className="truncate text-lg font-semibold tracking-tight text-slate-900">{form.name}</p>
+                  <p className="mt-1 line-clamp-2 text-sm leading-6 text-slate-600">{form.headline}</p>
                 </div>
-              </section>
+              </div>
+            </section>
 
-              <section className="rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                    <CirclePlus className="size-4 text-slate-500" />
-                    发布检查
-                  </p>
-                  <span className="text-[11px] font-medium text-slate-400">4 项</span>
-                </div>
+            <section className="rounded-2xl bg-white p-4">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <ShieldCheck className="size-4 text-slate-500" />
+                  发布设置
+                </p>
+                <span className="text-[11px] font-medium text-slate-400">Save</span>
+              </div>
 
-                <div className="mt-4 grid gap-2">
-                  {publishChecks.map((item) => (
+              <div className="mt-4 grid gap-3">
+                <label className="grid gap-1.5">
+                  <span className="text-xs font-medium text-slate-500">状态</span>
+                  <Select
+                    onValueChange={(value) => updateField("status", value as CreateMyAgentCompanionRequest["status"])}
+                    value={form.status}
+                  >
+                    <SelectTrigger className="h-9 w-full rounded-xl">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="draft">保存草稿</SelectItem>
+                      <SelectItem value="published">创建后可聊天</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </label>
+
+                <label className="grid gap-1.5">
+                  <span className="text-xs font-medium text-slate-500">可见性</span>
+                  <Select
+                    onValueChange={(value) => updateField("visibility", value as CreateMyAgentCompanionRequest["visibility"])}
+                    value={form.visibility}
+                  >
+                    <SelectTrigger className="h-9 w-full rounded-xl">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="private">仅自己可见</SelectItem>
+                      <SelectItem value="public">允许后续发布到广场</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </label>
+              </div>
+
+              <div className="mt-4 grid gap-2">
+                {completionChecks.map((item) => {
+                  const done = Boolean(String(form[item.field]).trim())
+
+                  return (
                     <div className="flex items-center gap-3 border-t border-slate-100 py-2 first:border-t-0 first:pt-0" key={item.label}>
                       <span
-                        className={
-                          item.done
-                            ? "flex size-6 items-center justify-center rounded-lg bg-slate-900 text-white"
-                            : "flex size-6 items-center justify-center rounded-lg bg-slate-100 text-slate-400"
-                        }
+                        className={cn(
+                          "flex size-6 items-center justify-center rounded-lg",
+                          done ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-400",
+                        )}
                       >
-                        {item.done ? <CheckCircle2 className="size-3.5" /> : <Sparkles className="size-3.5" />}
+                        {done ? <CheckCircle2 className="size-3.5" /> : <Sparkles className="size-3.5" />}
                       </span>
                       <span className="min-w-0 flex-1 text-sm font-medium text-slate-700">{item.label}</span>
                       <span className="text-[11px] font-medium text-slate-400">
-                        {item.done ? "完成" : "待补充"}
+                        {done ? "完成" : "待补充"}
                       </span>
                     </div>
-                  ))}
-                </div>
+                  )
+                })}
+              </div>
 
-                <button
-                  className="mt-4 inline-flex h-9 w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  type="button"
-                >
-                  <Send className="size-4" />
-                  准备发布
-                </button>
-              </section>
-            </aside>
-          </div>
+              {errorMessage ? (
+                <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+                  {errorMessage}
+                </p>
+              ) : null}
+
+              <Button
+                className="mt-4 h-9 w-full rounded-full"
+                disabled={isSaving || isUploadingImage}
+                onClick={handleSubmit}
+                type="button"
+              >
+                {isUploadingImage ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    上传形象中
+                  </>
+                ) : isSaving ? (
+                  <>
+                    <Wand2 className="size-4 animate-spin" />
+                    保存中
+                  </>
+                ) : (
+                  <>
+                    <Send className="size-4" />
+                    保存 Agent
+                  </>
+                )}
+              </Button>
+            </section>
+
+            <section className="rounded-2xl bg-white p-4">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <PenLine className="size-4 text-slate-500" />
+                  默认提示词
+                </p>
+                <span className="text-[11px] font-medium text-slate-400">Generated</span>
+              </div>
+              <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap rounded-xl bg-slate-50/80 p-3 text-xs leading-5 text-slate-600">
+                {previewPrompt}
+              </pre>
+            </section>
+          </aside>
         </section>
       </main>
     </DashboardShell>

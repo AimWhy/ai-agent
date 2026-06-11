@@ -1,17 +1,22 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm'
 import { uuidv7 } from 'uuidv7'
 import type { ApiDb } from '@/db/client'
 import {
+  agentConversationMessages,
+  agentConversations,
+  agentMemories,
   applicationAuthMethods,
   applications,
   authSessions,
   defaultAvatarVersions,
+  financialBills,
   oauthAccounts,
   oauthLoginTickets,
   passwordCredentials,
   refreshTokens,
   roles,
   subscriptionPlans,
+  userAgentCompanions,
   userEmails,
   userRoleBindings,
   userSubscriptionBindings,
@@ -133,6 +138,766 @@ export async function getWebRolesForUser(
   userId: string,
 ): Promise<string[]> {
   return getRolesForUserByApp(db, userId, 'web')
+}
+
+export async function getUserAgentCompanionSummary(
+  db: ApiDb,
+  userId: string,
+): Promise<{
+  total: number
+  published: number
+  draft: number
+}> {
+  const row = await db
+    .select({
+      total: sql<number>`count(*)`,
+      published: sql<number>`sum(case when ${userAgentCompanions.status} = 'published' then 1 else 0 end)`,
+      draft: sql<number>`sum(case when ${userAgentCompanions.status} = 'draft' then 1 else 0 end)`,
+    })
+    .from(userAgentCompanions)
+    .where(eq(userAgentCompanions.userId, userId))
+    .get()
+
+  return {
+    total: Number(row?.total ?? 0),
+    published: Number(row?.published ?? 0),
+    draft: Number(row?.draft ?? 0),
+  }
+}
+
+export async function findUserAgentCompanionOwner(
+  db: ApiDb,
+  params: {
+    userId: string
+    agentId: string
+  },
+): Promise<{
+  id: string
+  name: string
+  openingMessage: string | null
+} | null> {
+  const row = await db
+    .select({
+      id: userAgentCompanions.id,
+      name: userAgentCompanions.name,
+      openingMessage: userAgentCompanions.openingMessage,
+    })
+    .from(userAgentCompanions)
+    .where(and(
+      eq(userAgentCompanions.id, params.agentId),
+      eq(userAgentCompanions.userId, params.userId),
+    ))
+    .limit(1)
+    .get()
+
+  return row ?? null
+}
+
+export async function createUserAgentCompanion(params: {
+  db: ApiDb
+  id: string
+  userId: string
+  name: string
+  headline: string
+  description: string
+  storyBackground: string
+  personalityPrompt: string
+  tonePrompt: string
+  guardrailsPrompt: string
+  openingMessage: string
+  defaultPrompt: string
+  imageKey: string | null
+  visibility: 'private' | 'public'
+  status: 'draft' | 'published'
+  nowMs: number
+}) {
+  await params.db.insert(userAgentCompanions).values({
+    id: params.id,
+    userId: params.userId,
+    name: params.name,
+    headline: params.headline,
+    description: params.description,
+    storyBackground: params.storyBackground,
+    personalityPrompt: params.personalityPrompt,
+    tonePrompt: params.tonePrompt,
+    guardrailsPrompt: params.guardrailsPrompt,
+    openingMessage: params.openingMessage,
+    defaultPrompt: params.defaultPrompt,
+    imageKey: params.imageKey,
+    visibility: params.visibility,
+    status: params.status,
+    createdAtMs: params.nowMs,
+    updatedAtMs: params.nowMs,
+    publishedAtMs: params.status === 'published' ? params.nowMs : null,
+    archivedAtMs: null,
+  })
+}
+
+export async function listUserAgentCompanionsForInbox(
+  db: ApiDb,
+  userId: string,
+): Promise<Array<{
+  id: string
+  name: string
+  headline: string | null
+  description: string | null
+  storyBackground: string | null
+  openingMessage: string | null
+  imageKey: string | null
+  latestMessage: string | null
+  latestMessageAtMs: number | null
+  lastAssistantMessage: string | null
+  lastAssistantMessageAtMs: number | null
+  status: 'draft' | 'published' | 'archived'
+  createdAtMs: number
+  updatedAtMs: number
+}>> {
+  const rows = await db
+    .select({
+      id: userAgentCompanions.id,
+      name: userAgentCompanions.name,
+      headline: userAgentCompanions.headline,
+      description: userAgentCompanions.description,
+      storyBackground: userAgentCompanions.storyBackground,
+      openingMessage: userAgentCompanions.openingMessage,
+      imageKey: userAgentCompanions.imageKey,
+      latestMessage: sql<string | null>`(
+        select ${agentConversationMessages.content}
+        from ${agentConversationMessages}
+        where ${agentConversationMessages.userId} = ${userAgentCompanions.userId}
+          and ${agentConversationMessages.agentId} = ${userAgentCompanions.id}
+        order by ${agentConversationMessages.createdAtMs} desc, ${agentConversationMessages.id} desc
+        limit 1
+      )`,
+      latestMessageAtMs: sql<number | null>`(
+        select ${agentConversationMessages.createdAtMs}
+        from ${agentConversationMessages}
+        where ${agentConversationMessages.userId} = ${userAgentCompanions.userId}
+          and ${agentConversationMessages.agentId} = ${userAgentCompanions.id}
+        order by ${agentConversationMessages.createdAtMs} desc, ${agentConversationMessages.id} desc
+        limit 1
+      )`,
+      lastAssistantMessage: userAgentCompanions.lastAssistantMessage,
+      lastAssistantMessageAtMs: userAgentCompanions.lastAssistantMessageAtMs,
+      status: userAgentCompanions.status,
+      createdAtMs: userAgentCompanions.createdAtMs,
+      updatedAtMs: sql<number>`coalesce(${agentConversations.lastMessageAtMs}, ${userAgentCompanions.lastAssistantMessageAtMs}, ${userAgentCompanions.updatedAtMs})`,
+    })
+    .from(userAgentCompanions)
+    .leftJoin(
+      agentConversations,
+      and(
+        eq(agentConversations.userId, userAgentCompanions.userId),
+        eq(agentConversations.agentId, userAgentCompanions.id),
+      ),
+    )
+    .where(eq(userAgentCompanions.userId, userId))
+    .orderBy(sql`coalesce(${agentConversations.lastMessageAtMs}, ${userAgentCompanions.lastAssistantMessageAtMs}, ${userAgentCompanions.updatedAtMs}) desc, ${userAgentCompanions.id} desc`)
+    .limit(50)
+
+  return rows.map((row) => ({
+    ...row,
+    status: row.status as 'draft' | 'published' | 'archived',
+  }))
+}
+
+export async function findDefaultAgentConversation(
+  db: ApiDb,
+  params: {
+    userId: string
+    agentId: string
+  },
+): Promise<{
+  id: string
+  userId: string
+  agentId: string
+  title: string | null
+  summary: string | null
+  messageCount: number
+  lastMessageAtMs: number | null
+  createdAtMs: number
+  updatedAtMs: number
+} | null> {
+  const row = await db
+    .select({
+      id: agentConversations.id,
+      userId: agentConversations.userId,
+      agentId: agentConversations.agentId,
+      title: agentConversations.title,
+      summary: agentConversations.summary,
+      messageCount: agentConversations.messageCount,
+      lastMessageAtMs: agentConversations.lastMessageAtMs,
+      createdAtMs: agentConversations.createdAtMs,
+      updatedAtMs: agentConversations.updatedAtMs,
+    })
+    .from(agentConversations)
+    .where(and(
+      eq(agentConversations.userId, params.userId),
+      eq(agentConversations.agentId, params.agentId),
+    ))
+    .limit(1)
+    .get()
+
+  return row ?? null
+}
+
+export async function createDefaultAgentConversation(params: {
+  db: ApiDb
+  id: string
+  userId: string
+  agentId: string
+  title: string
+  nowMs: number
+}) {
+  await params.db.insert(agentConversations).values({
+    id: params.id,
+    userId: params.userId,
+    agentId: params.agentId,
+    title: params.title,
+    summary: null,
+    messageCount: 0,
+    lastMessageAtMs: null,
+    createdAtMs: params.nowMs,
+    updatedAtMs: params.nowMs,
+  }).onConflictDoNothing()
+}
+
+export async function getOrCreateDefaultAgentConversation(params: {
+  db: ApiDb
+  id: string
+  userId: string
+  agentId: string
+  title: string
+  nowMs: number
+}) {
+  const existing = await findDefaultAgentConversation(params.db, {
+    userId: params.userId,
+    agentId: params.agentId,
+  })
+
+  if (existing) {
+    return existing
+  }
+
+  await createDefaultAgentConversation(params)
+
+  return (await findDefaultAgentConversation(params.db, {
+    userId: params.userId,
+    agentId: params.agentId,
+  }))!
+}
+
+export async function listAgentConversationMessages(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+  conversationId: string
+  beforeMs?: number
+  limit: number
+}): Promise<Array<{
+  id: string
+  conversationId: string
+  agentId: string
+  role: 'user' | 'assistant'
+  content: string
+  status: 'completed' | 'failed'
+  createdAtMs: number
+}>> {
+  const conditions: SQL[] = [
+    eq(agentConversationMessages.userId, params.userId),
+    eq(agentConversationMessages.agentId, params.agentId),
+    eq(agentConversationMessages.conversationId, params.conversationId),
+  ]
+
+  if (params.beforeMs) {
+    conditions.push(sql`${agentConversationMessages.createdAtMs} < ${params.beforeMs}`)
+  }
+
+  const rows = await params.db
+    .select({
+      id: agentConversationMessages.id,
+      conversationId: agentConversationMessages.conversationId,
+      agentId: agentConversationMessages.agentId,
+      role: agentConversationMessages.role,
+      content: agentConversationMessages.content,
+      status: agentConversationMessages.status,
+      createdAtMs: agentConversationMessages.createdAtMs,
+    })
+    .from(agentConversationMessages)
+    .where(and(...conditions))
+    .orderBy(sql`${agentConversationMessages.createdAtMs} desc, ${agentConversationMessages.id} desc`)
+    .limit(params.limit)
+
+  return rows
+    .map((row) => ({
+      ...row,
+      role: row.role as 'user' | 'assistant',
+      status: row.status as 'completed' | 'failed',
+    }))
+    .reverse()
+}
+
+export async function insertAgentConversationMessage(params: {
+  db: ApiDb
+  id: string
+  conversationId: string
+  userId: string
+  agentId: string
+  role: 'user' | 'assistant'
+  content: string
+  status: 'completed' | 'failed'
+  metadataJson?: string | null
+  nowMs: number
+}) {
+  await params.db.insert(agentConversationMessages).values({
+    id: params.id,
+    conversationId: params.conversationId,
+    userId: params.userId,
+    agentId: params.agentId,
+    role: params.role,
+    content: params.content,
+    status: params.status,
+    metadataJson: params.metadataJson ?? null,
+    createdAtMs: params.nowMs,
+  })
+}
+
+export async function updateAgentConversationAfterMessage(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+  conversationId: string
+  summary: string | null
+  messageCount: number
+  lastMessageAtMs: number
+  nowMs: number
+}) {
+  await params.db
+    .update(agentConversations)
+    .set({
+      summary: params.summary,
+      messageCount: params.messageCount,
+      lastMessageAtMs: params.lastMessageAtMs,
+      updatedAtMs: params.nowMs,
+    })
+    .where(and(
+      eq(agentConversations.id, params.conversationId),
+      eq(agentConversations.userId, params.userId),
+      eq(agentConversations.agentId, params.agentId),
+    ))
+}
+
+export async function listActiveAgentMemories(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+  limit: number
+}): Promise<Array<{
+  id: string
+  type: string
+  content: string
+  importance: number
+  updatedAtMs: number
+}>> {
+  return params.db
+    .select({
+      id: agentMemories.id,
+      type: agentMemories.type,
+      content: agentMemories.content,
+      importance: agentMemories.importance,
+      updatedAtMs: agentMemories.updatedAtMs,
+    })
+    .from(agentMemories)
+    .where(and(
+      eq(agentMemories.userId, params.userId),
+      eq(agentMemories.agentId, params.agentId),
+      eq(agentMemories.status, 'active'),
+    ))
+    .orderBy(sql`${agentMemories.importance} desc, ${agentMemories.updatedAtMs} desc`)
+    .limit(params.limit)
+}
+
+export async function listAgentMemories(params: {
+  db: ApiDb
+  userId: string
+  agentId?: string
+  includeDeleted?: boolean
+}): Promise<Array<{
+  id: string
+  agentId: string
+  type: string
+  content: string
+  importance: number
+  status: 'active' | 'disabled' | 'deleted'
+  sourceMessageId: string | null
+  sourceMessage: {
+    id: string
+    role: 'user' | 'assistant'
+    content: string
+    createdAtMs: number
+  } | null
+  createdAtMs: number
+  updatedAtMs: number
+}>> {
+  const conditions: SQL[] = [
+    eq(agentMemories.userId, params.userId),
+  ]
+
+  if (params.agentId) {
+    conditions.push(eq(agentMemories.agentId, params.agentId))
+  }
+
+  if (!params.includeDeleted) {
+    conditions.push(sql`${agentMemories.status} != 'deleted'`)
+  }
+
+  const rows = await params.db
+    .select({
+      id: agentMemories.id,
+      agentId: agentMemories.agentId,
+      type: agentMemories.type,
+      content: agentMemories.content,
+      importance: agentMemories.importance,
+      status: agentMemories.status,
+      sourceMessageId: agentMemories.sourceMessageId,
+      createdAtMs: agentMemories.createdAtMs,
+      updatedAtMs: agentMemories.updatedAtMs,
+      sourceRole: agentConversationMessages.role,
+      sourceContent: agentConversationMessages.content,
+      sourceCreatedAtMs: agentConversationMessages.createdAtMs,
+    })
+    .from(agentMemories)
+    .leftJoin(agentConversationMessages, eq(agentConversationMessages.id, agentMemories.sourceMessageId))
+    .where(and(...conditions))
+    .orderBy(sql`${agentMemories.updatedAtMs} desc, ${agentMemories.id} desc`)
+    .limit(100)
+
+  return rows.map((row) => ({
+    id: row.id,
+    agentId: row.agentId,
+    type: row.type,
+    content: row.content,
+    importance: row.importance,
+    status: row.status as 'active' | 'disabled' | 'deleted',
+    sourceMessageId: row.sourceMessageId,
+    sourceMessage: row.sourceMessageId && row.sourceRole && row.sourceContent && typeof row.sourceCreatedAtMs === 'number'
+      ? {
+          id: row.sourceMessageId,
+          role: row.sourceRole as 'user' | 'assistant',
+          content: row.sourceContent,
+          createdAtMs: row.sourceCreatedAtMs,
+        }
+      : null,
+    createdAtMs: row.createdAtMs,
+    updatedAtMs: row.updatedAtMs,
+  }))
+}
+
+export async function findAgentMemory(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+  memoryId: string
+}): Promise<{
+  id: string
+  agentId: string
+  type: string
+  content: string
+  importance: number
+  status: 'active' | 'disabled' | 'deleted'
+  sourceMessageId: string | null
+  sourceMessage: {
+    id: string
+    role: 'user' | 'assistant'
+    content: string
+    createdAtMs: number
+  } | null
+  createdAtMs: number
+  updatedAtMs: number
+} | null> {
+  const row = await params.db
+    .select({
+      id: agentMemories.id,
+      agentId: agentMemories.agentId,
+      type: agentMemories.type,
+      content: agentMemories.content,
+      importance: agentMemories.importance,
+      status: agentMemories.status,
+      sourceMessageId: agentMemories.sourceMessageId,
+      createdAtMs: agentMemories.createdAtMs,
+      updatedAtMs: agentMemories.updatedAtMs,
+      sourceRole: agentConversationMessages.role,
+      sourceContent: agentConversationMessages.content,
+      sourceCreatedAtMs: agentConversationMessages.createdAtMs,
+    })
+    .from(agentMemories)
+    .leftJoin(agentConversationMessages, eq(agentConversationMessages.id, agentMemories.sourceMessageId))
+    .where(and(
+      eq(agentMemories.id, params.memoryId),
+      eq(agentMemories.userId, params.userId),
+      eq(agentMemories.agentId, params.agentId),
+    ))
+    .limit(1)
+    .get()
+
+  if (!row) {
+    return null
+  }
+
+  return {
+    id: row.id,
+    agentId: row.agentId,
+    type: row.type,
+    content: row.content,
+    importance: row.importance,
+    status: row.status as 'active' | 'disabled' | 'deleted',
+    sourceMessageId: row.sourceMessageId,
+    sourceMessage: row.sourceMessageId && row.sourceRole && row.sourceContent && typeof row.sourceCreatedAtMs === 'number'
+      ? {
+          id: row.sourceMessageId,
+          role: row.sourceRole as 'user' | 'assistant',
+          content: row.sourceContent,
+          createdAtMs: row.sourceCreatedAtMs,
+        }
+      : null,
+    createdAtMs: row.createdAtMs,
+    updatedAtMs: row.updatedAtMs,
+  }
+}
+
+export async function insertAgentMemory(params: {
+  db: ApiDb
+  id: string
+  userId: string
+  agentId: string
+  type: string
+  content: string
+  importance: number
+  sourceMessageId: string | null
+  nowMs: number
+}) {
+  await params.db.insert(agentMemories).values({
+    id: params.id,
+    userId: params.userId,
+    agentId: params.agentId,
+    type: params.type,
+    content: params.content,
+    importance: params.importance,
+    status: 'active',
+    sourceMessageId: params.sourceMessageId,
+    createdAtMs: params.nowMs,
+    updatedAtMs: params.nowMs,
+  })
+}
+
+export async function updateAgentMemory(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+  memoryId: string
+  patch: {
+    type?: string
+    content?: string
+    importance?: number
+    status?: 'active' | 'disabled' | 'deleted'
+  }
+  nowMs: number
+}) {
+  await params.db
+    .update(agentMemories)
+    .set({
+      ...params.patch,
+      updatedAtMs: params.nowMs,
+    })
+    .where(and(
+      eq(agentMemories.id, params.memoryId),
+      eq(agentMemories.userId, params.userId),
+      eq(agentMemories.agentId, params.agentId),
+    ))
+}
+
+export async function findUserAgentCompanionDetail(
+  db: ApiDb,
+  params: {
+    userId: string
+    agentId: string
+  },
+): Promise<{
+  id: string
+  name: string
+  headline: string | null
+  description: string | null
+  storyBackground: string | null
+  personalityPrompt: string | null
+  tonePrompt: string | null
+  guardrailsPrompt: string | null
+  openingMessage: string | null
+  defaultPrompt: string | null
+  imageKey: string | null
+  visibility: 'private' | 'public' | null
+  status: 'draft' | 'published' | 'archived'
+  lastAssistantMessage: string | null
+  lastAssistantMessageAtMs: number | null
+  createdAtMs: number
+  updatedAtMs: number
+  publishedAtMs: number | null
+  archivedAtMs: number | null
+} | null> {
+  const row = await db
+    .select({
+      id: userAgentCompanions.id,
+      name: userAgentCompanions.name,
+      headline: userAgentCompanions.headline,
+      description: userAgentCompanions.description,
+      storyBackground: userAgentCompanions.storyBackground,
+      personalityPrompt: userAgentCompanions.personalityPrompt,
+      tonePrompt: userAgentCompanions.tonePrompt,
+      guardrailsPrompt: userAgentCompanions.guardrailsPrompt,
+      openingMessage: userAgentCompanions.openingMessage,
+      defaultPrompt: userAgentCompanions.defaultPrompt,
+      imageKey: userAgentCompanions.imageKey,
+      visibility: userAgentCompanions.visibility,
+      status: userAgentCompanions.status,
+      lastAssistantMessage: userAgentCompanions.lastAssistantMessage,
+      lastAssistantMessageAtMs: userAgentCompanions.lastAssistantMessageAtMs,
+      createdAtMs: userAgentCompanions.createdAtMs,
+      updatedAtMs: userAgentCompanions.updatedAtMs,
+      publishedAtMs: userAgentCompanions.publishedAtMs,
+      archivedAtMs: userAgentCompanions.archivedAtMs,
+    })
+    .from(userAgentCompanions)
+    .where(and(
+      eq(userAgentCompanions.id, params.agentId),
+      eq(userAgentCompanions.userId, params.userId),
+    ))
+    .limit(1)
+    .get()
+
+  return row
+    ? {
+        ...row,
+        visibility: row.visibility as 'private' | 'public' | null,
+        status: row.status as 'draft' | 'published' | 'archived',
+      }
+    : null
+}
+
+export async function updateUserAgentCompanion(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+  name: string
+  headline: string
+  description: string
+  storyBackground: string
+  personalityPrompt: string
+  tonePrompt: string
+  guardrailsPrompt: string
+  openingMessage: string
+  defaultPrompt: string
+  imageKey: string | null
+  visibility: 'private' | 'public'
+  status: 'draft' | 'published'
+  publishedAtMs: number | null
+  nowMs: number
+}) {
+  await params.db
+    .update(userAgentCompanions)
+    .set({
+      name: params.name,
+      headline: params.headline,
+      description: params.description,
+      storyBackground: params.storyBackground,
+      personalityPrompt: params.personalityPrompt,
+      tonePrompt: params.tonePrompt,
+      guardrailsPrompt: params.guardrailsPrompt,
+      openingMessage: params.openingMessage,
+      defaultPrompt: params.defaultPrompt,
+      imageKey: params.imageKey,
+      visibility: params.visibility,
+      status: params.status,
+      updatedAtMs: params.nowMs,
+      publishedAtMs: params.publishedAtMs,
+      archivedAtMs: null,
+    })
+    .where(and(
+      eq(userAgentCompanions.id, params.agentId),
+      eq(userAgentCompanions.userId, params.userId),
+    ))
+}
+
+export async function updateUserAgentCompanionLatestAssistantMessage(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+  message: string
+  nowMs: number
+}) {
+  await params.db
+    .update(userAgentCompanions)
+    .set({
+      lastAssistantMessage: params.message,
+      lastAssistantMessageAtMs: params.nowMs,
+      updatedAtMs: params.nowMs,
+    })
+    .where(and(
+      eq(userAgentCompanions.id, params.agentId),
+      eq(userAgentCompanions.userId, params.userId),
+    ))
+}
+
+export async function findUserAgentCompanionImageByKey(
+  db: ApiDb,
+  params: {
+    userId: string
+    imageKey: string
+  },
+): Promise<{
+  id: string
+  imageKey: string | null
+} | null> {
+  const row = await db
+    .select({
+      id: userAgentCompanions.id,
+      imageKey: userAgentCompanions.imageKey,
+    })
+    .from(userAgentCompanions)
+    .where(and(
+      eq(userAgentCompanions.userId, params.userId),
+      eq(userAgentCompanions.imageKey, params.imageKey),
+    ))
+    .limit(1)
+    .get()
+
+  return row ?? null
+}
+
+export async function findUserAgentCompanionPrompt(
+  db: ApiDb,
+  params: {
+    userId: string
+    agentId: string
+  },
+): Promise<{
+  id: string
+  name: string
+  defaultPrompt: string | null
+} | null> {
+  const row = await db
+    .select({
+      id: userAgentCompanions.id,
+      name: userAgentCompanions.name,
+      defaultPrompt: userAgentCompanions.defaultPrompt,
+    })
+    .from(userAgentCompanions)
+    .where(and(
+      eq(userAgentCompanions.id, params.agentId),
+      eq(userAgentCompanions.userId, params.userId),
+    ))
+    .limit(1)
+    .get()
+
+  return row ?? null
 }
 
 export async function findWebUserByGithubAccount(
@@ -1119,6 +1884,165 @@ export async function assignUserSubscriptionPlan(params: {
       revokedAtMs: null,
     }),
   ])
+}
+
+export async function createFinancialBill(params: {
+  db: ApiDb
+  id: string
+  wechatNickname: string
+  email: string
+  normalizedEmail: string
+  paidAmountCents: number
+  paidAtMs: number
+  billingMonth: string
+  isRefunded: boolean
+  refundAmountCents: number
+  note: string | null
+  createdByUserId: string
+  nowMs: number
+}): Promise<void> {
+  await params.db.insert(financialBills).values({
+    id: params.id,
+    wechatNickname: params.wechatNickname,
+    email: params.email,
+    normalizedEmail: params.normalizedEmail,
+    paidAmountCents: params.paidAmountCents,
+    paidAtMs: params.paidAtMs,
+    billingMonth: params.billingMonth,
+    isRefunded: params.isRefunded ? 1 : 0,
+    refundAmountCents: params.refundAmountCents,
+    note: params.note,
+    createdByUserId: params.createdByUserId,
+    createdAtMs: params.nowMs,
+    updatedAtMs: params.nowMs,
+  })
+}
+
+export async function listFinancialBillMonths(db: ApiDb): Promise<Array<{
+  month: string
+  billCount: number
+  paidAmountCents: number
+  refundAmountCents: number
+  netRevenueCents: number
+}>> {
+  const rows = await db
+    .select({
+      month: financialBills.billingMonth,
+      billCount: sql<number>`count(*)`,
+      paidAmountCents: sql<number>`COALESCE(sum(${financialBills.paidAmountCents}), 0)`,
+      refundAmountCents: sql<number>`COALESCE(sum(${financialBills.refundAmountCents}), 0)`,
+      netRevenueCents: sql<number>`COALESCE(sum(${financialBills.paidAmountCents} - ${financialBills.refundAmountCents}), 0)`,
+    })
+    .from(financialBills)
+    .groupBy(financialBills.billingMonth)
+    .orderBy(sql`${financialBills.billingMonth} desc`)
+
+  return rows.map((row) => ({
+    month: row.month,
+    billCount: Number(row.billCount),
+    paidAmountCents: Number(row.paidAmountCents),
+    refundAmountCents: Number(row.refundAmountCents),
+    netRevenueCents: Number(row.netRevenueCents),
+  }))
+}
+
+export async function listFinancialBillsByMonth(
+  db: ApiDb,
+  month: string,
+): Promise<Array<{
+  id: string
+  wechatNickname: string
+  email: string
+  paidAmountCents: number
+  paidAtMs: number
+  billingMonth: string
+  isRefunded: boolean
+  refundAmountCents: number
+  netRevenueCents: number
+  note: string | null
+  createdByUserId: string | null
+  createdAtMs: number
+  updatedAtMs: number
+}>> {
+  const rows = await db
+    .select({
+      id: financialBills.id,
+      wechatNickname: financialBills.wechatNickname,
+      email: financialBills.email,
+      paidAmountCents: financialBills.paidAmountCents,
+      paidAtMs: financialBills.paidAtMs,
+      billingMonth: financialBills.billingMonth,
+      isRefunded: financialBills.isRefunded,
+      refundAmountCents: financialBills.refundAmountCents,
+      netRevenueCents: sql<number>`${financialBills.paidAmountCents} - ${financialBills.refundAmountCents}`,
+      note: financialBills.note,
+      createdByUserId: financialBills.createdByUserId,
+      createdAtMs: financialBills.createdAtMs,
+      updatedAtMs: financialBills.updatedAtMs,
+    })
+    .from(financialBills)
+    .where(eq(financialBills.billingMonth, month))
+    .orderBy(sql`${financialBills.paidAtMs} desc, ${financialBills.id} desc`)
+
+  return rows.map((row) => ({
+    ...row,
+    isRefunded: row.isRefunded === 1,
+    netRevenueCents: Number(row.netRevenueCents),
+  }))
+}
+
+export async function findFinancialBillById(
+  db: ApiDb,
+  billId: string,
+): Promise<{ id: string } | null> {
+  const row = await db
+    .select({ id: financialBills.id })
+    .from(financialBills)
+    .where(eq(financialBills.id, billId))
+    .limit(1)
+    .get()
+
+  return row ?? null
+}
+
+export async function updateFinancialBill(params: {
+  db: ApiDb
+  billId: string
+  wechatNickname: string
+  email: string
+  normalizedEmail: string
+  paidAmountCents: number
+  paidAtMs: number
+  billingMonth: string
+  isRefunded: boolean
+  refundAmountCents: number
+  note: string | null
+  nowMs: number
+}): Promise<void> {
+  await params.db
+    .update(financialBills)
+    .set({
+      wechatNickname: params.wechatNickname,
+      email: params.email,
+      normalizedEmail: params.normalizedEmail,
+      paidAmountCents: params.paidAmountCents,
+      paidAtMs: params.paidAtMs,
+      billingMonth: params.billingMonth,
+      isRefunded: params.isRefunded ? 1 : 0,
+      refundAmountCents: params.refundAmountCents,
+      note: params.note,
+      updatedAtMs: params.nowMs,
+    })
+    .where(eq(financialBills.id, params.billId))
+}
+
+export async function deleteFinancialBill(params: {
+  db: ApiDb
+  billId: string
+}): Promise<void> {
+  await params.db
+    .delete(financialBills)
+    .where(eq(financialBills.id, params.billId))
 }
 
 export async function updateUserAvatarKey(params: {
