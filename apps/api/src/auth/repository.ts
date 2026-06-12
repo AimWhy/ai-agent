@@ -881,12 +881,14 @@ export async function findUserAgentCompanionPrompt(
 ): Promise<{
   id: string
   name: string
+  guardrailsPrompt: string | null
   defaultPrompt: string | null
 } | null> {
   const row = await db
     .select({
       id: userAgentCompanions.id,
       name: userAgentCompanions.name,
+      guardrailsPrompt: userAgentCompanions.guardrailsPrompt,
       defaultPrompt: userAgentCompanions.defaultPrompt,
     })
     .from(userAgentCompanions)

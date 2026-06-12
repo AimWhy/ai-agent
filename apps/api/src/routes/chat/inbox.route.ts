@@ -52,6 +52,36 @@ const initialHistoryLimit = 40
 const memoryInjectionLimit = 12
 const memoryExtractionLimit = 2
 
+const ConversationSafetySchema = z.object({
+  safetyLevel: z.enum(['safe', 'caution', 'redirect', 'block', 'crisis']),
+  category: z.enum([
+    'normal',
+    'emotional_dependency',
+    'manipulation',
+    'self_harm',
+    'sexual_boundary',
+    'privacy',
+    'illegal',
+    'medical_legal_financial',
+    'other',
+  ]),
+  boundaryAction: z.enum(['continue', 'soft_boundary', 'redirect', 'refuse', 'crisis_support']),
+  reason: z.string().trim().max(300),
+  responseGuidance: z.string().trim().max(600),
+  allowMemoryExtraction: z.boolean(),
+})
+
+type ConversationSafety = z.infer<typeof ConversationSafetySchema>
+
+const fallbackSafety: ConversationSafety = {
+  safetyLevel: 'caution',
+  category: 'other',
+  boundaryAction: 'soft_boundary',
+  reason: '安全边界判断暂时不可用，采用保守回复策略。',
+  responseGuidance: '用温和、克制、尊重边界的方式回复；不要提供操控、伤害、违法或高风险专业建议。',
+  allowMemoryExtraction: false,
+}
+
 const AgentMemoryExtractionSchema = z.object({
   memories: z.array(z.object({
     type: z.enum(['偏好', '边界', '关系目标', '对话风格', '重要事实']),
@@ -92,6 +122,38 @@ const agentMemoryExtractionPrompt = ChatPromptTemplate.fromMessages([
       '',
       '本轮 Agent 回复：',
       '{assistantText}',
+    ].join('\n'),
+  ],
+])
+
+const conversationSafetyPrompt = ChatPromptTemplate.fromMessages([
+  [
+    'system',
+    [
+      '你是 AI 电子伴侣聊天产品的安全边界判断器。',
+      '你的任务是判断本轮用户输入是否需要安全边界处理，而不是替用户聊天。',
+      '必须优先识别自伤危机、违法暴力、隐私侵犯、操控关系、性边界、高风险医疗法律财务建议、强情绪依赖。',
+      '不要因为产品是陪伴/恋爱/交友场景就放松边界；也不要过度拦截普通倾诉、轻度暧昧和正常情绪表达。',
+      '如果不确定，使用 caution + soft_boundary，而不是 safe。',
+      '输出必须是可被 LangChain 结构化解析的 JSON 对象。',
+    ].join('\n'),
+  ],
+  [
+    'human',
+    [
+      'Agent 名称：{agentName}',
+      '',
+      'Agent 自定义边界规则：',
+      '{agentGuardrails}',
+      '',
+      '长期记忆：',
+      '{activeMemories}',
+      '',
+      '最近对话：',
+      '{recentMessages}',
+      '',
+      '本轮用户输入：',
+      '{userText}',
     ].join('\n'),
   ],
 ])
@@ -556,6 +618,17 @@ function formatExistingMemories(memories: StoredAgentMemory[]) {
     .join('\n')
 }
 
+function formatRecentMessages(messages: Array<{ role: 'user' | 'assistant'; content: string }>) {
+  if (messages.length === 0) {
+    return '暂无'
+  }
+
+  return messages
+    .slice(-8)
+    .map((message) => `${message.role === 'user' ? '用户' : 'Agent'}：${normalizeStoredMessage(message.content).slice(0, 1000)}`)
+    .join('\n')
+}
+
 function normalizeMemoryContent(content: string) {
   return content.replace(/\s+/g, ' ').trim().slice(0, 500)
 }
@@ -568,7 +641,7 @@ function normalizeMemoryImportance(importance: number) {
   return Math.min(5, Math.max(1, Math.round(importance)))
 }
 
-function buildLangChainMemoryModel(providerConfig: ChatProviderConfig) {
+function buildLangChainChatModel(providerConfig: ChatProviderConfig) {
   return new ChatOpenAI({
     model: providerConfig.model,
     apiKey: providerConfig.apiKey,
@@ -582,8 +655,16 @@ function buildLangChainMemoryModel(providerConfig: ChatProviderConfig) {
   })
 }
 
+function getStructuredOutputMethods(providerConfig: ChatProviderConfig) {
+  return providerConfig.wireApi === 'responses'
+    ? ['jsonSchema', 'functionCalling', 'jsonMode'] as const
+    : ['functionCalling', 'jsonSchema', 'jsonMode'] as const
+}
+
+type LangChainStructuredOutputMethod = ReturnType<typeof getStructuredOutputMethods>[number]
+
 async function invokeLangChainMemoryExtraction(params: {
-  method: 'jsonSchema' | 'functionCalling' | 'jsonMode'
+  method: LangChainStructuredOutputMethod
   providerConfig: ChatProviderConfig
   agentName: string
   existingMemories: StoredAgentMemory[]
@@ -592,7 +673,7 @@ async function invokeLangChainMemoryExtraction(params: {
   assistantText: string
   signal?: AbortSignal
 }) {
-  const model = buildLangChainMemoryModel(params.providerConfig)
+  const model = buildLangChainChatModel(params.providerConfig)
   const structuredModel = model.withStructuredOutput(AgentMemoryExtractionSchema, {
     name: 'agent_memory_extraction',
     method: params.method,
@@ -626,9 +707,7 @@ async function extractAgentMemoriesWithLangChain(params: {
     return []
   }
 
-  const methods: Array<'jsonSchema' | 'functionCalling' | 'jsonMode'> = params.providerConfig.wireApi === 'responses'
-    ? ['jsonSchema', 'functionCalling', 'jsonMode']
-    : ['functionCalling', 'jsonSchema', 'jsonMode']
+  const methods = getStructuredOutputMethods(params.providerConfig)
   let lastError: unknown = null
 
   for (const method of methods) {
@@ -645,6 +724,141 @@ async function extractAgentMemoriesWithLangChain(params: {
   }
 
   throw lastError
+}
+
+async function invokeConversationSafetyAnalysis(params: {
+  method: LangChainStructuredOutputMethod
+  providerConfig: ChatProviderConfig
+  agentName: string
+  agentGuardrails: string | null
+  activeMemories: StoredAgentMemory[]
+  recentMessages: Array<{ role: 'user' | 'assistant'; content: string }>
+  userText: string
+  signal: AbortSignal
+}) {
+  const model = buildLangChainChatModel(params.providerConfig)
+  const structuredModel = model.withStructuredOutput(ConversationSafetySchema, {
+    name: 'conversation_safety_analysis',
+    method: params.method,
+  })
+  const chain = conversationSafetyPrompt.pipe(structuredModel)
+  const result = await chain.invoke({
+    agentName: params.agentName || '未命名 Agent',
+    agentGuardrails: params.agentGuardrails || '暂无',
+    activeMemories: formatExistingMemories(params.activeMemories),
+    recentMessages: formatRecentMessages(params.recentMessages),
+    userText: params.userText,
+  }, { signal: params.signal })
+
+  return normalizeConversationSafety(ConversationSafetySchema.parse(result))
+}
+
+function normalizeConversationSafety(safety: ConversationSafety): ConversationSafety {
+  const next = { ...safety }
+
+  if (next.safetyLevel === 'crisis') {
+    next.boundaryAction = 'crisis_support'
+    next.allowMemoryExtraction = false
+  }
+
+  if (next.safetyLevel === 'block' && next.boundaryAction !== 'crisis_support') {
+    next.boundaryAction = 'refuse'
+    next.allowMemoryExtraction = false
+  }
+
+  if (next.boundaryAction === 'refuse' || next.boundaryAction === 'crisis_support') {
+    next.allowMemoryExtraction = false
+  }
+
+  if (next.boundaryAction === 'continue' && next.safetyLevel !== 'safe') {
+    next.boundaryAction = 'soft_boundary'
+  }
+
+  if (!next.responseGuidance) {
+    next.responseGuidance = '用温和、克制、尊重边界的方式回复。'
+  }
+
+  return next
+}
+
+async function analyzeConversationSafety(params: {
+  providerConfig: ChatProviderConfig
+  agentName: string
+  agentGuardrails: string | null
+  activeMemories: StoredAgentMemory[]
+  recentMessages: Array<{ role: 'user' | 'assistant'; content: string }>
+  userText: string
+  signal: AbortSignal
+}): Promise<ConversationSafety> {
+  const userText = normalizeStoredMessage(params.userText)
+
+  if (!userText) {
+    return normalizeConversationSafety({
+      safetyLevel: 'safe',
+      category: 'normal',
+      boundaryAction: 'continue',
+      reason: '没有可分析的用户输入。',
+      responseGuidance: '正常回复。',
+      allowMemoryExtraction: true,
+    })
+  }
+
+  let lastError: unknown = null
+
+  for (const method of getStructuredOutputMethods(params.providerConfig)) {
+    try {
+      return await invokeConversationSafetyAnalysis({
+        ...params,
+        method,
+        userText,
+      })
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  console.warn('LangChain conversation safety analysis failed', lastError)
+  return normalizeConversationSafety(fallbackSafety)
+}
+
+function toSafetyMetadata(safety: ConversationSafety) {
+  return JSON.stringify({
+    analysisVersion: 'conversation-safety-v1',
+    safety,
+  })
+}
+
+function getSafetySystemInstruction(safety: ConversationSafety) {
+  if (safety.boundaryAction === 'continue') {
+    return ''
+  }
+
+  return [
+    '本轮安全边界判断：',
+    `- 等级：${safety.safetyLevel}`,
+    `- 分类：${safety.category}`,
+    `- 动作：${safety.boundaryAction}`,
+    `- 回复策略：${safety.responseGuidance}`,
+    '请严格遵守该策略，优先保护用户与他人的现实安全、隐私和关系边界。',
+  ].join('\n')
+}
+
+function buildBoundaryResponse(safety: ConversationSafety) {
+  if (safety.boundaryAction === 'crisis_support') {
+    return [
+      '我听到你现在可能很难受。先别一个人硬扛，尽量把手边可能伤害自己的东西移远一点，去到更安全、有人能看见你的地方。',
+      '如果你有立即伤害自己的可能，请现在联系当地紧急电话或身边可信的人，让他们陪你。你也可以告诉我：你现在是否安全、身边有没有人可以马上联系。',
+    ].join('\n\n')
+  }
+
+  if (safety.boundaryAction === 'refuse') {
+    return [
+      '这个请求我不能直接帮你完成，因为它可能会伤害他人、侵犯隐私，或越过必要的安全边界。',
+      safety.responseGuidance || '我可以换一种更安全、尊重边界的方式，帮你梳理真实需求和可行表达。',
+    ].join('\n\n')
+  }
+
+  return ''
 }
 
 async function persistAgentMemoriesFromTurn(params: {
@@ -777,6 +991,7 @@ async function saveAssistantTurn(params: {
   userText: string
   assistantText: string
   providerConfig: ChatProviderConfig
+  allowMemoryExtraction: boolean
   previousSummary: string | null
   previousMessageCount: number
   recentMessages: Array<{ role: 'user' | 'assistant'; content: string }>
@@ -829,6 +1044,10 @@ async function saveAssistantTurn(params: {
     agentId: params.agentId,
     text: message,
   })
+
+  if (!params.allowMemoryExtraction) {
+    return
+  }
 
   await scheduleAgentMemoryExtraction({
     c: params.c,
@@ -963,6 +1182,15 @@ inboxChatRoute.post(
       .reverse()
       .find((message) => message.role === 'user' && extractText(message))
     const latestUserText = latestPayloadUserMessage ? normalizeStoredMessage(extractText(latestPayloadUserMessage)) : ''
+    const safety = await analyzeConversationSafety({
+      providerConfig,
+      agentName: payload.conversation.name,
+      agentGuardrails: agentPrompt?.guardrailsPrompt ?? null,
+      activeMemories,
+      recentMessages: storedRecentMessages,
+      userText: latestUserText,
+      signal: c.req.raw.signal,
+    })
     let sourceUserMessageId: string | null = null
 
     if (agentId && conversationId && latestUserText) {
@@ -978,6 +1206,7 @@ inboxChatRoute.post(
         role: 'user',
         content: latestUserText,
         status: 'completed',
+        metadataJson: toSafetyMetadata(safety),
         nowMs: userMessageNowMs,
       })
       await updateAgentConversationAfterMessage({
@@ -992,6 +1221,33 @@ inboxChatRoute.post(
       })
     }
 
+    const boundaryResponse = buildBoundaryResponse(safety)
+
+    if (boundaryResponse) {
+      await saveAssistantTurn({
+        c,
+        userId: claims.sub,
+        agentId,
+        agentName: payload.conversation.name,
+        conversationId,
+        sourceUserMessageId,
+        userText: latestUserText,
+        assistantText: boundaryResponse,
+        providerConfig,
+        allowMemoryExtraction: safety.allowMemoryExtraction,
+        previousSummary: ownedConversation?.conversation.summary ?? null,
+        previousMessageCount: ownedConversation?.conversation.messageCount ?? 0,
+        recentMessages: storedRecentMessages,
+      })
+
+      return buildTextStreamResponse(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(boundaryResponse))
+          controller.close()
+        },
+      }))
+    }
+
     const messages: ChatCompletionMessage[] = [
       {
         role: 'system',
@@ -1000,6 +1256,7 @@ inboxChatRoute.post(
           '请基于当前聊天对象、关系氛围和用户意图，用简洁、自然的中文回答用户。',
           '如果用户要求起草回复，请直接给出可发送的聊天内容，避免正式公文格式和职场汇报语气。',
           '你的建议应尊重双方边界，避免操控式话术、制造焦虑或诱导过度解读。',
+          getSafetySystemInstruction(safety),
           activeMemories.length > 0
             ? [
                 '以下是用户与该 Agent 的长期记忆，请优先尊重：',
@@ -1090,6 +1347,7 @@ inboxChatRoute.post(
         userText: latestUserText,
         assistantText: responseText,
         providerConfig: effectiveProviderConfig,
+        allowMemoryExtraction: safety.allowMemoryExtraction,
         previousSummary: ownedConversation?.conversation.summary ?? null,
         previousMessageCount: ownedConversation?.conversation.messageCount ?? 0,
         recentMessages: storedRecentMessages,
@@ -1125,6 +1383,7 @@ inboxChatRoute.post(
             userText: latestUserText,
             assistantText: emptyUpstreamMessage,
             providerConfig: effectiveProviderConfig,
+            allowMemoryExtraction: safety.allowMemoryExtraction,
             previousSummary: ownedConversation?.conversation.summary ?? null,
             previousMessageCount: ownedConversation?.conversation.messageCount ?? 0,
             recentMessages: storedRecentMessages,
@@ -1166,6 +1425,7 @@ inboxChatRoute.post(
                   userText: latestUserText,
                   assistantText: assistantMessageText,
                   providerConfig: effectiveProviderConfig,
+                  allowMemoryExtraction: safety.allowMemoryExtraction,
                   previousSummary: ownedConversation?.conversation.summary ?? null,
                   previousMessageCount: ownedConversation?.conversation.messageCount ?? 0,
                   recentMessages: storedRecentMessages,
@@ -1213,6 +1473,7 @@ inboxChatRoute.post(
               userText: latestUserText,
               assistantText: assistantMessageText,
               providerConfig: effectiveProviderConfig,
+              allowMemoryExtraction: safety.allowMemoryExtraction,
               previousSummary: ownedConversation?.conversation.summary ?? null,
               previousMessageCount: ownedConversation?.conversation.messageCount ?? 0,
               recentMessages: storedRecentMessages,
