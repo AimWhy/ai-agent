@@ -4,6 +4,7 @@ import adminAuthRoute from './auth/admin.route'
 import webAuthRoute from './auth/web.route'
 import myAgentRoute from './agent/my.route'
 import catalogRoute from './catalog/list.route'
+import groupChatRoute from './chat/group.route'
 import inboxChatRoute from './chat/inbox.route'
 import financialBillRoute from './financial/bill.route'
 import orderRoute from './order/detail.route'
@@ -23,6 +24,7 @@ const appRoutes = routes
   .route('/rpc/agent/my', myAgentRoute)
   .route('/rpc/system/ping', pingRoute)
   .route('/rpc/catalog', catalogRoute)
+  .route('/rpc/chat/group', groupChatRoute)
   .route('/rpc/chat/inbox', inboxChatRoute)
   .route('/rpc/financial/bill', financialBillRoute)
   .route('/rpc/user', userRoute)

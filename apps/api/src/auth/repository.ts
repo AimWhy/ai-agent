@@ -2,8 +2,14 @@ import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm'
 import { uuidv7 } from 'uuidv7'
 import type { ApiDb } from '@/db/client'
 import {
+  agentCareEvents,
+  agentCarePlans,
   agentConversationMessages,
   agentConversations,
+  agentGroupChatMembers,
+  agentGroupChatMessages,
+  agentGroupChats,
+  agentMessageFeedbacks,
   agentMemories,
   applicationAuthMethods,
   applications,
@@ -248,6 +254,8 @@ export async function listUserAgentCompanionsForInbox(
   latestMessageAtMs: number | null
   lastAssistantMessage: string | null
   lastAssistantMessageAtMs: number | null
+  hasUnreadCareEvent: boolean
+  messageCount: number
   status: 'draft' | 'published' | 'archived'
   createdAtMs: number
   updatedAtMs: number
@@ -279,6 +287,7 @@ export async function listUserAgentCompanionsForInbox(
       )`,
       lastAssistantMessage: userAgentCompanions.lastAssistantMessage,
       lastAssistantMessageAtMs: userAgentCompanions.lastAssistantMessageAtMs,
+      messageCount: sql<number>`coalesce(${agentConversations.messageCount}, 0)`,
       status: userAgentCompanions.status,
       createdAtMs: userAgentCompanions.createdAtMs,
       updatedAtMs: sql<number>`coalesce(${agentConversations.lastMessageAtMs}, ${userAgentCompanions.lastAssistantMessageAtMs}, ${userAgentCompanions.updatedAtMs})`,
@@ -295,10 +304,568 @@ export async function listUserAgentCompanionsForInbox(
     .orderBy(sql`coalesce(${agentConversations.lastMessageAtMs}, ${userAgentCompanions.lastAssistantMessageAtMs}, ${userAgentCompanions.updatedAtMs}) desc, ${userAgentCompanions.id} desc`)
     .limit(50)
 
+  const unreadCareAgentIds = new Set<string>()
+
+  if (rows.length > 0) {
+    try {
+      const unreadRows = await db
+        .select({
+          agentId: agentCareEvents.agentId,
+          count: sql<number>`count(*)`,
+        })
+        .from(agentCareEvents)
+        .where(and(
+          eq(agentCareEvents.userId, userId),
+          inArray(agentCareEvents.agentId, rows.map((row) => row.id)),
+          eq(agentCareEvents.status, 'generated'),
+          isNull(agentCareEvents.readAtMs),
+        ))
+        .groupBy(agentCareEvents.agentId)
+
+      for (const row of unreadRows) {
+        if (Number(row.count ?? 0) > 0) {
+          unreadCareAgentIds.add(row.agentId)
+        }
+      }
+    } catch (error) {
+      console.warn('Agent care unread count is unavailable', error)
+    }
+  }
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    headline: row.headline,
+    description: row.description,
+    storyBackground: row.storyBackground,
+    openingMessage: row.openingMessage,
+    imageKey: row.imageKey,
+    latestMessage: row.latestMessage,
+    latestMessageAtMs: row.latestMessageAtMs,
+    lastAssistantMessage: row.lastAssistantMessage,
+    lastAssistantMessageAtMs: row.lastAssistantMessageAtMs,
+    hasUnreadCareEvent: unreadCareAgentIds.has(row.id),
+    messageCount: row.messageCount,
+    status: row.status as 'draft' | 'published' | 'archived',
+    createdAtMs: row.createdAtMs,
+    updatedAtMs: row.updatedAtMs,
+  }))
+}
+
+export type AgentGroupChatMemberRecord = {
+  id: string
+  agentId: string
+  name: string
+  headline: string | null
+  imageKey: string | null
+  status: 'active' | 'removed'
+  displayOrder: number
+  joinedAtMs: number
+}
+
+export type AgentGroupChatMessageRecord = {
+  id: string
+  groupChatId: string
+  senderType: 'user' | 'agent' | 'system'
+  agentId: string | null
+  agentName: string | null
+  agentImageKey: string | null
+  content: string
+  status: 'completed' | 'failed'
+  turnIndex: number
+  createdAtMs: number
+}
+
+export type AgentGroupChatRecord = {
+  id: string
+  title: string
+  summary: string | null
+  messageCount: number
+  lastMessageAtMs: number | null
+  createdAtMs: number
+  updatedAtMs: number
+  members: AgentGroupChatMemberRecord[]
+  latestMessage: AgentGroupChatMessageRecord | null
+}
+
+export type AgentGroupChatAgentRecord = {
+  id: string
+  name: string
+  headline: string | null
+  description: string | null
+  storyBackground: string | null
+  personalityPrompt: string | null
+  tonePrompt: string | null
+  guardrailsPrompt: string | null
+  defaultPrompt: string | null
+  imageKey: string | null
+  displayOrder: number
+}
+
+async function listAgentGroupChatMembersForGroups(
+  db: ApiDb,
+  params: {
+    userId: string
+    groupChatIds: string[]
+  },
+): Promise<Map<string, AgentGroupChatMemberRecord[]>> {
+  const membersByGroupId = new Map<string, AgentGroupChatMemberRecord[]>()
+
+  if (params.groupChatIds.length === 0) {
+    return membersByGroupId
+  }
+
+  const rows = await db
+    .select({
+      groupChatId: agentGroupChatMembers.groupChatId,
+      id: agentGroupChatMembers.id,
+      agentId: agentGroupChatMembers.agentId,
+      name: userAgentCompanions.name,
+      headline: userAgentCompanions.headline,
+      imageKey: userAgentCompanions.imageKey,
+      status: agentGroupChatMembers.status,
+      displayOrder: agentGroupChatMembers.displayOrder,
+      joinedAtMs: agentGroupChatMembers.joinedAtMs,
+    })
+    .from(agentGroupChatMembers)
+    .innerJoin(userAgentCompanions, eq(userAgentCompanions.id, agentGroupChatMembers.agentId))
+    .where(and(
+      eq(agentGroupChatMembers.userId, params.userId),
+      inArray(agentGroupChatMembers.groupChatId, params.groupChatIds),
+      eq(agentGroupChatMembers.status, 'active'),
+    ))
+    .orderBy(sql`${agentGroupChatMembers.displayOrder} asc, ${agentGroupChatMembers.id} asc`)
+
+  for (const row of rows) {
+    const members = membersByGroupId.get(row.groupChatId) ?? []
+    members.push({
+      id: row.id,
+      agentId: row.agentId,
+      name: row.name,
+      headline: row.headline,
+      imageKey: row.imageKey,
+      status: row.status as 'active' | 'removed',
+      displayOrder: row.displayOrder,
+      joinedAtMs: row.joinedAtMs,
+    })
+    membersByGroupId.set(row.groupChatId, members)
+  }
+
+  return membersByGroupId
+}
+
+async function listLatestAgentGroupChatMessagesForGroups(
+  db: ApiDb,
+  params: {
+    userId: string
+    groupChatIds: string[]
+  },
+): Promise<Map<string, AgentGroupChatMessageRecord>> {
+  const latestByGroupId = new Map<string, AgentGroupChatMessageRecord>()
+
+  if (params.groupChatIds.length === 0) {
+    return latestByGroupId
+  }
+
+  const rows = await db
+    .select({
+      id: agentGroupChatMessages.id,
+      groupChatId: agentGroupChatMessages.groupChatId,
+      senderType: agentGroupChatMessages.senderType,
+      agentId: agentGroupChatMessages.agentId,
+      agentName: userAgentCompanions.name,
+      agentImageKey: userAgentCompanions.imageKey,
+      content: agentGroupChatMessages.content,
+      status: agentGroupChatMessages.status,
+      turnIndex: agentGroupChatMessages.turnIndex,
+      createdAtMs: agentGroupChatMessages.createdAtMs,
+    })
+    .from(agentGroupChatMessages)
+    .leftJoin(userAgentCompanions, eq(userAgentCompanions.id, agentGroupChatMessages.agentId))
+    .where(and(
+      eq(agentGroupChatMessages.userId, params.userId),
+      inArray(agentGroupChatMessages.groupChatId, params.groupChatIds),
+    ))
+    .orderBy(sql`${agentGroupChatMessages.createdAtMs} desc, ${agentGroupChatMessages.id} desc`)
+
+  for (const row of rows) {
+    if (latestByGroupId.has(row.groupChatId)) {
+      continue
+    }
+
+    latestByGroupId.set(row.groupChatId, {
+      id: row.id,
+      groupChatId: row.groupChatId,
+      senderType: row.senderType as 'user' | 'agent' | 'system',
+      agentId: row.agentId,
+      agentName: row.agentName,
+      agentImageKey: row.agentImageKey,
+      content: row.content,
+      status: row.status as 'completed' | 'failed',
+      turnIndex: row.turnIndex,
+      createdAtMs: row.createdAtMs,
+    })
+  }
+
+  return latestByGroupId
+}
+
+export async function listAgentGroupChats(
+  db: ApiDb,
+  userId: string,
+): Promise<AgentGroupChatRecord[]> {
+  const rows = await db
+    .select({
+      id: agentGroupChats.id,
+      title: agentGroupChats.title,
+      summary: agentGroupChats.summary,
+      messageCount: agentGroupChats.messageCount,
+      lastMessageAtMs: agentGroupChats.lastMessageAtMs,
+      createdAtMs: agentGroupChats.createdAtMs,
+      updatedAtMs: agentGroupChats.updatedAtMs,
+    })
+    .from(agentGroupChats)
+    .where(eq(agentGroupChats.userId, userId))
+    .orderBy(sql`coalesce(${agentGroupChats.lastMessageAtMs}, ${agentGroupChats.updatedAtMs}) desc, ${agentGroupChats.id} desc`)
+    .limit(50)
+
+  const groupChatIds = rows.map((row) => row.id)
+  const [membersByGroupId, latestByGroupId] = await Promise.all([
+    listAgentGroupChatMembersForGroups(db, { userId, groupChatIds }),
+    listLatestAgentGroupChatMessagesForGroups(db, { userId, groupChatIds }),
+  ])
+
   return rows.map((row) => ({
     ...row,
-    status: row.status as 'draft' | 'published' | 'archived',
+    members: membersByGroupId.get(row.id) ?? [],
+    latestMessage: latestByGroupId.get(row.id) ?? null,
   }))
+}
+
+export async function findAgentGroupChat(
+  db: ApiDb,
+  params: {
+    userId: string
+    groupChatId: string
+  },
+): Promise<AgentGroupChatRecord | null> {
+  const row = await db
+    .select({
+      id: agentGroupChats.id,
+      title: agentGroupChats.title,
+      summary: agentGroupChats.summary,
+      messageCount: agentGroupChats.messageCount,
+      lastMessageAtMs: agentGroupChats.lastMessageAtMs,
+      createdAtMs: agentGroupChats.createdAtMs,
+      updatedAtMs: agentGroupChats.updatedAtMs,
+    })
+    .from(agentGroupChats)
+    .where(and(
+      eq(agentGroupChats.id, params.groupChatId),
+      eq(agentGroupChats.userId, params.userId),
+    ))
+    .limit(1)
+    .get()
+
+  if (!row) {
+    return null
+  }
+
+  const [membersByGroupId, latestByGroupId] = await Promise.all([
+    listAgentGroupChatMembersForGroups(db, { userId: params.userId, groupChatIds: [row.id] }),
+    listLatestAgentGroupChatMessagesForGroups(db, { userId: params.userId, groupChatIds: [row.id] }),
+  ])
+
+  return {
+    ...row,
+    members: membersByGroupId.get(row.id) ?? [],
+    latestMessage: latestByGroupId.get(row.id) ?? null,
+  }
+}
+
+export async function listOwnedAgentCompanionsByIds(
+  db: ApiDb,
+  params: {
+    userId: string
+    agentIds: string[]
+  },
+): Promise<AgentGroupChatAgentRecord[]> {
+  if (params.agentIds.length === 0) {
+    return []
+  }
+
+  const rows = await db
+    .select({
+      id: userAgentCompanions.id,
+      name: userAgentCompanions.name,
+      headline: userAgentCompanions.headline,
+      description: userAgentCompanions.description,
+      storyBackground: userAgentCompanions.storyBackground,
+      personalityPrompt: userAgentCompanions.personalityPrompt,
+      tonePrompt: userAgentCompanions.tonePrompt,
+      guardrailsPrompt: userAgentCompanions.guardrailsPrompt,
+      defaultPrompt: userAgentCompanions.defaultPrompt,
+      imageKey: userAgentCompanions.imageKey,
+    })
+    .from(userAgentCompanions)
+    .where(and(
+      eq(userAgentCompanions.userId, params.userId),
+      inArray(userAgentCompanions.id, params.agentIds),
+      sql`${userAgentCompanions.status} != 'archived'`,
+    ))
+
+  const orderByAgentId = new Map(params.agentIds.map((agentId, index) => [agentId, index]))
+
+  return rows
+    .map((row) => ({
+      ...row,
+      displayOrder: orderByAgentId.get(row.id) ?? 0,
+    }))
+    .sort((a, b) => a.displayOrder - b.displayOrder)
+}
+
+export async function createAgentGroupChat(params: {
+  db: ApiDb
+  id: string
+  userId: string
+  title: string
+  agentIds: string[]
+  nowMs: number
+}) {
+  await params.db.insert(agentGroupChats).values({
+    id: params.id,
+    userId: params.userId,
+    title: params.title,
+    summary: null,
+    messageCount: 0,
+    lastMessageAtMs: null,
+    createdAtMs: params.nowMs,
+    updatedAtMs: params.nowMs,
+  })
+
+  if (params.agentIds.length > 0) {
+    await params.db.insert(agentGroupChatMembers).values(params.agentIds.map((agentId, index) => ({
+      id: uuidv7(),
+      groupChatId: params.id,
+      userId: params.userId,
+      agentId,
+      displayOrder: index,
+      status: 'active',
+      joinedAtMs: params.nowMs,
+      removedAtMs: null,
+    })))
+  }
+}
+
+export async function addAgentGroupChatMembers(params: {
+  db: ApiDb
+  userId: string
+  groupChatId: string
+  agentIds: string[]
+  nowMs: number
+}) {
+  if (params.agentIds.length === 0) {
+    return
+  }
+
+  const existingRows = await params.db
+    .select({
+      agentId: agentGroupChatMembers.agentId,
+      displayOrder: agentGroupChatMembers.displayOrder,
+    })
+    .from(agentGroupChatMembers)
+    .where(and(
+      eq(agentGroupChatMembers.userId, params.userId),
+      eq(agentGroupChatMembers.groupChatId, params.groupChatId),
+      eq(agentGroupChatMembers.status, 'active'),
+    ))
+
+  const existingAgentIds = new Set(existingRows.map((row) => row.agentId))
+  const maxOrder = existingRows.reduce((max, row) => Math.max(max, row.displayOrder), -1)
+  const nextAgentIds = params.agentIds.filter((agentId) => !existingAgentIds.has(agentId))
+
+  if (nextAgentIds.length === 0) {
+    return
+  }
+
+  await params.db.insert(agentGroupChatMembers).values(nextAgentIds.map((agentId, index) => ({
+    id: uuidv7(),
+    groupChatId: params.groupChatId,
+    userId: params.userId,
+    agentId,
+    displayOrder: maxOrder + index + 1,
+    status: 'active',
+    joinedAtMs: params.nowMs,
+    removedAtMs: null,
+  })))
+
+  await params.db
+    .update(agentGroupChats)
+    .set({ updatedAtMs: params.nowMs })
+    .where(and(
+      eq(agentGroupChats.id, params.groupChatId),
+      eq(agentGroupChats.userId, params.userId),
+    ))
+}
+
+export async function removeAgentGroupChatMember(params: {
+  db: ApiDb
+  userId: string
+  groupChatId: string
+  memberId: string
+  nowMs: number
+}) {
+  await params.db
+    .update(agentGroupChatMembers)
+    .set({
+      status: 'removed',
+      removedAtMs: params.nowMs,
+    })
+    .where(and(
+      eq(agentGroupChatMembers.id, params.memberId),
+      eq(agentGroupChatMembers.userId, params.userId),
+      eq(agentGroupChatMembers.groupChatId, params.groupChatId),
+    ))
+
+  await params.db
+    .update(agentGroupChats)
+    .set({ updatedAtMs: params.nowMs })
+    .where(and(
+      eq(agentGroupChats.id, params.groupChatId),
+      eq(agentGroupChats.userId, params.userId),
+    ))
+}
+
+export async function listAgentGroupChatAgents(params: {
+  db: ApiDb
+  userId: string
+  groupChatId: string
+}): Promise<AgentGroupChatAgentRecord[]> {
+  const rows = await params.db
+    .select({
+      id: userAgentCompanions.id,
+      name: userAgentCompanions.name,
+      headline: userAgentCompanions.headline,
+      description: userAgentCompanions.description,
+      storyBackground: userAgentCompanions.storyBackground,
+      personalityPrompt: userAgentCompanions.personalityPrompt,
+      tonePrompt: userAgentCompanions.tonePrompt,
+      guardrailsPrompt: userAgentCompanions.guardrailsPrompt,
+      defaultPrompt: userAgentCompanions.defaultPrompt,
+      imageKey: userAgentCompanions.imageKey,
+      displayOrder: agentGroupChatMembers.displayOrder,
+    })
+    .from(agentGroupChatMembers)
+    .innerJoin(userAgentCompanions, eq(userAgentCompanions.id, agentGroupChatMembers.agentId))
+    .where(and(
+      eq(agentGroupChatMembers.userId, params.userId),
+      eq(agentGroupChatMembers.groupChatId, params.groupChatId),
+      eq(agentGroupChatMembers.status, 'active'),
+    ))
+    .orderBy(sql`${agentGroupChatMembers.displayOrder} asc, ${agentGroupChatMembers.id} asc`)
+
+  return rows
+}
+
+export async function listAgentGroupChatMessages(params: {
+  db: ApiDb
+  userId: string
+  groupChatId: string
+  beforeMs?: number
+  limit: number
+}): Promise<AgentGroupChatMessageRecord[]> {
+  const conditions: SQL[] = [
+    eq(agentGroupChatMessages.userId, params.userId),
+    eq(agentGroupChatMessages.groupChatId, params.groupChatId),
+  ]
+
+  if (params.beforeMs) {
+    conditions.push(sql`${agentGroupChatMessages.createdAtMs} < ${params.beforeMs}`)
+  }
+
+  const rows = await params.db
+    .select({
+      id: agentGroupChatMessages.id,
+      groupChatId: agentGroupChatMessages.groupChatId,
+      senderType: agentGroupChatMessages.senderType,
+      agentId: agentGroupChatMessages.agentId,
+      agentName: userAgentCompanions.name,
+      agentImageKey: userAgentCompanions.imageKey,
+      content: agentGroupChatMessages.content,
+      status: agentGroupChatMessages.status,
+      turnIndex: agentGroupChatMessages.turnIndex,
+      createdAtMs: agentGroupChatMessages.createdAtMs,
+    })
+    .from(agentGroupChatMessages)
+    .leftJoin(userAgentCompanions, eq(userAgentCompanions.id, agentGroupChatMessages.agentId))
+    .where(and(...conditions))
+    .orderBy(sql`${agentGroupChatMessages.createdAtMs} desc, ${agentGroupChatMessages.id} desc`)
+    .limit(params.limit)
+
+  return rows
+    .map((row) => ({
+      id: row.id,
+      groupChatId: row.groupChatId,
+      senderType: row.senderType as 'user' | 'agent' | 'system',
+      agentId: row.agentId,
+      agentName: row.agentName,
+      agentImageKey: row.agentImageKey,
+      content: row.content,
+      status: row.status as 'completed' | 'failed',
+      turnIndex: row.turnIndex,
+      createdAtMs: row.createdAtMs,
+    }))
+    .reverse()
+}
+
+export async function insertAgentGroupChatMessage(params: {
+  db: ApiDb
+  id: string
+  userId: string
+  groupChatId: string
+  senderType: 'user' | 'agent' | 'system'
+  agentId: string | null
+  content: string
+  status: 'completed' | 'failed'
+  turnIndex: number
+  metadataJson?: string | null
+  nowMs: number
+}) {
+  await params.db.insert(agentGroupChatMessages).values({
+    id: params.id,
+    userId: params.userId,
+    groupChatId: params.groupChatId,
+    senderType: params.senderType,
+    agentId: params.agentId,
+    content: params.content,
+    status: params.status,
+    turnIndex: params.turnIndex,
+    metadataJson: params.metadataJson ?? null,
+    createdAtMs: params.nowMs,
+  })
+}
+
+export async function updateAgentGroupChatAfterMessage(params: {
+  db: ApiDb
+  userId: string
+  groupChatId: string
+  summary: string | null
+  messageCount: number
+  lastMessageAtMs: number
+  nowMs: number
+}) {
+  await params.db
+    .update(agentGroupChats)
+    .set({
+      summary: params.summary,
+      messageCount: params.messageCount,
+      lastMessageAtMs: params.lastMessageAtMs,
+      updatedAtMs: params.nowMs,
+    })
+    .where(and(
+      eq(agentGroupChats.id, params.groupChatId),
+      eq(agentGroupChats.userId, params.userId),
+    ))
 }
 
 export async function findDefaultAgentConversation(
@@ -402,6 +969,12 @@ export async function listAgentConversationMessages(params: {
   content: string
   status: 'completed' | 'failed'
   createdAtMs: number
+  feedback: {
+    rating: 'positive' | 'negative'
+    reason: string | null
+    note: string | null
+    updatedAtMs: number
+  } | null
 }>> {
   const conditions: SQL[] = [
     eq(agentConversationMessages.userId, params.userId),
@@ -428,11 +1001,55 @@ export async function listAgentConversationMessages(params: {
     .orderBy(sql`${agentConversationMessages.createdAtMs} desc, ${agentConversationMessages.id} desc`)
     .limit(params.limit)
 
+  const feedbackByMessageId = new Map<string, {
+    rating: 'positive' | 'negative'
+    reason: string | null
+    note: string | null
+    updatedAtMs: number
+  }>()
+
+  if (rows.length > 0) {
+    try {
+      const feedbackRows = await params.db
+        .select({
+          messageId: agentMessageFeedbacks.messageId,
+          rating: agentMessageFeedbacks.rating,
+          reason: agentMessageFeedbacks.reason,
+          note: agentMessageFeedbacks.note,
+          updatedAtMs: agentMessageFeedbacks.updatedAtMs,
+        })
+        .from(agentMessageFeedbacks)
+        .where(and(
+          eq(agentMessageFeedbacks.userId, params.userId),
+          inArray(agentMessageFeedbacks.messageId, rows.map((row) => row.id)),
+        ))
+
+      for (const row of feedbackRows) {
+        if (row.rating !== 'positive' && row.rating !== 'negative') {
+          continue
+        }
+        feedbackByMessageId.set(row.messageId, {
+          rating: row.rating,
+          reason: row.reason,
+          note: row.note,
+          updatedAtMs: row.updatedAtMs,
+        })
+      }
+    } catch (error) {
+      console.warn('Agent message feedbacks are unavailable', error)
+    }
+  }
+
   return rows
     .map((row) => ({
-      ...row,
+      id: row.id,
+      conversationId: row.conversationId,
+      agentId: row.agentId,
       role: row.role as 'user' | 'assistant',
+      content: row.content,
       status: row.status as 'completed' | 'failed',
+      createdAtMs: row.createdAtMs,
+      feedback: feedbackByMessageId.get(row.id) ?? null,
     }))
     .reverse()
 }
@@ -460,6 +1077,156 @@ export async function insertAgentConversationMessage(params: {
     metadataJson: params.metadataJson ?? null,
     createdAtMs: params.nowMs,
   })
+}
+
+export async function findAgentConversationMessageForFeedback(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+  messageId: string
+}): Promise<{
+  id: string
+  conversationId: string
+  agentId: string
+  role: 'assistant'
+  content: string
+  createdAtMs: number
+} | null> {
+  const row = await params.db
+    .select({
+      id: agentConversationMessages.id,
+      conversationId: agentConversationMessages.conversationId,
+      agentId: agentConversationMessages.agentId,
+      role: agentConversationMessages.role,
+      content: agentConversationMessages.content,
+      createdAtMs: agentConversationMessages.createdAtMs,
+    })
+    .from(agentConversationMessages)
+    .where(and(
+      eq(agentConversationMessages.id, params.messageId),
+      eq(agentConversationMessages.userId, params.userId),
+      eq(agentConversationMessages.agentId, params.agentId),
+      eq(agentConversationMessages.role, 'assistant'),
+      eq(agentConversationMessages.status, 'completed'),
+    ))
+    .limit(1)
+    .get()
+
+  if (!row) {
+    return null
+  }
+
+  return {
+    id: row.id,
+    conversationId: row.conversationId,
+    agentId: row.agentId,
+    role: 'assistant',
+    content: row.content,
+    createdAtMs: row.createdAtMs,
+  }
+}
+
+export async function upsertAgentMessageFeedback(params: {
+  db: ApiDb
+  id: string
+  userId: string
+  agentId: string
+  conversationId: string
+  messageId: string
+  rating: 'positive' | 'negative'
+  reason: string | null
+  note: string | null
+  nowMs: number
+}): Promise<{
+  rating: 'positive' | 'negative'
+  reason: string | null
+  note: string | null
+  updatedAtMs: number
+}> {
+  const existing = await params.db
+    .select({ id: agentMessageFeedbacks.id })
+    .from(agentMessageFeedbacks)
+    .where(and(
+      eq(agentMessageFeedbacks.userId, params.userId),
+      eq(agentMessageFeedbacks.messageId, params.messageId),
+    ))
+    .limit(1)
+    .get()
+
+  if (existing) {
+    await params.db
+      .update(agentMessageFeedbacks)
+      .set({
+        agentId: params.agentId,
+        conversationId: params.conversationId,
+        rating: params.rating,
+        reason: params.reason,
+        note: params.note,
+        updatedAtMs: params.nowMs,
+      })
+      .where(and(
+        eq(agentMessageFeedbacks.id, existing.id),
+        eq(agentMessageFeedbacks.userId, params.userId),
+      ))
+  } else {
+    await params.db.insert(agentMessageFeedbacks).values({
+      id: params.id,
+      userId: params.userId,
+      agentId: params.agentId,
+      conversationId: params.conversationId,
+      messageId: params.messageId,
+      rating: params.rating,
+      reason: params.reason,
+      note: params.note,
+      createdAtMs: params.nowMs,
+      updatedAtMs: params.nowMs,
+    })
+  }
+
+  return {
+    rating: params.rating,
+    reason: params.reason,
+    note: params.note,
+    updatedAtMs: params.nowMs,
+  }
+}
+
+export async function listRecentAgentMessageFeedbacks(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+  limit: number
+}): Promise<Array<{
+  rating: 'positive' | 'negative'
+  reason: string | null
+  note: string | null
+  messageContent: string
+  updatedAtMs: number
+}>> {
+  const rows = await params.db
+    .select({
+      rating: agentMessageFeedbacks.rating,
+      reason: agentMessageFeedbacks.reason,
+      note: agentMessageFeedbacks.note,
+      updatedAtMs: agentMessageFeedbacks.updatedAtMs,
+      messageContent: agentConversationMessages.content,
+    })
+    .from(agentMessageFeedbacks)
+    .innerJoin(agentConversationMessages, eq(agentConversationMessages.id, agentMessageFeedbacks.messageId))
+    .where(and(
+      eq(agentMessageFeedbacks.userId, params.userId),
+      eq(agentMessageFeedbacks.agentId, params.agentId),
+    ))
+    .orderBy(sql`${agentMessageFeedbacks.updatedAtMs} desc, ${agentMessageFeedbacks.id} desc`)
+    .limit(params.limit)
+
+  return rows.map((row) => ({
+    rating: row.rating as 'positive' | 'negative',
+    reason: row.reason,
+    note: row.note,
+    messageContent: row.messageContent,
+    updatedAtMs: row.updatedAtMs,
+  }))
 }
 
 export async function updateAgentConversationAfterMessage(params: {
@@ -844,6 +1611,305 @@ export async function updateUserAgentCompanionLatestAssistantMessage(params: {
       eq(userAgentCompanions.id, params.agentId),
       eq(userAgentCompanions.userId, params.userId),
     ))
+}
+
+export async function findAgentCarePlan(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+}): Promise<{
+  id: string
+  agentId: string
+  enabled: boolean
+  frequency: 'daily' | 'weekly' | 'custom'
+  preferredTime: string | null
+  scenes: Array<'morning' | 'night' | 'long_absence' | 'stress_support' | 'relationship_warmup' | 'anniversary'>
+  tone: 'light' | 'gentle' | 'intimate'
+  customPrompt: string | null
+  nextRunAtMs: number | null
+  createdAtMs: number
+  updatedAtMs: number
+} | null> {
+  const row = await params.db
+    .select({
+      id: agentCarePlans.id,
+      agentId: agentCarePlans.agentId,
+      enabled: agentCarePlans.enabled,
+      frequency: agentCarePlans.frequency,
+      preferredTime: agentCarePlans.preferredTime,
+      scenesJson: agentCarePlans.scenesJson,
+      tone: agentCarePlans.tone,
+      customPrompt: agentCarePlans.customPrompt,
+      nextRunAtMs: agentCarePlans.nextRunAtMs,
+      createdAtMs: agentCarePlans.createdAtMs,
+      updatedAtMs: agentCarePlans.updatedAtMs,
+    })
+    .from(agentCarePlans)
+    .where(and(
+      eq(agentCarePlans.userId, params.userId),
+      eq(agentCarePlans.agentId, params.agentId),
+    ))
+    .limit(1)
+    .get()
+
+  if (!row) {
+    return null
+  }
+
+  const allowedScenes = new Set(['morning', 'night', 'long_absence', 'stress_support', 'relationship_warmup', 'anniversary'])
+  let scenes: Array<'morning' | 'night' | 'long_absence' | 'stress_support' | 'relationship_warmup' | 'anniversary'> = ['long_absence']
+
+  try {
+    const parsed = JSON.parse(row.scenesJson)
+    const normalizedScenes = Array.isArray(parsed)
+      ? parsed.filter((scene): scene is 'morning' | 'night' | 'long_absence' | 'stress_support' | 'relationship_warmup' | 'anniversary' =>
+          typeof scene === 'string' && allowedScenes.has(scene),
+        )
+      : []
+
+    if (normalizedScenes.length > 0) {
+      scenes = normalizedScenes
+    }
+  } catch {
+    scenes = ['long_absence']
+  }
+
+  return {
+    id: row.id,
+    agentId: row.agentId,
+    enabled: row.enabled === 1,
+    frequency: row.frequency as 'daily' | 'weekly' | 'custom',
+    preferredTime: row.preferredTime,
+    scenes,
+    tone: row.tone as 'light' | 'gentle' | 'intimate',
+    customPrompt: row.customPrompt,
+    nextRunAtMs: row.nextRunAtMs,
+    createdAtMs: row.createdAtMs,
+    updatedAtMs: row.updatedAtMs,
+  }
+}
+
+export async function upsertAgentCarePlan(params: {
+  db: ApiDb
+  id: string
+  userId: string
+  agentId: string
+  enabled: boolean
+  frequency: 'daily' | 'weekly' | 'custom'
+  preferredTime: string | null
+  scenes: Array<'morning' | 'night' | 'long_absence' | 'stress_support' | 'relationship_warmup' | 'anniversary'>
+  tone: 'light' | 'gentle' | 'intimate'
+  customPrompt: string | null
+  nextRunAtMs: number | null
+  nowMs: number
+}) {
+  const existing = await params.db
+    .select({ id: agentCarePlans.id, createdAtMs: agentCarePlans.createdAtMs })
+    .from(agentCarePlans)
+    .where(and(
+      eq(agentCarePlans.userId, params.userId),
+      eq(agentCarePlans.agentId, params.agentId),
+    ))
+    .limit(1)
+    .get()
+
+  if (existing) {
+    await params.db
+      .update(agentCarePlans)
+      .set({
+        enabled: params.enabled ? 1 : 0,
+        frequency: params.frequency,
+        preferredTime: params.preferredTime,
+        scenesJson: JSON.stringify(params.scenes),
+        tone: params.tone,
+        customPrompt: params.customPrompt,
+        nextRunAtMs: params.nextRunAtMs,
+        updatedAtMs: params.nowMs,
+      })
+      .where(and(
+        eq(agentCarePlans.id, existing.id),
+        eq(agentCarePlans.userId, params.userId),
+      ))
+
+    return existing.id
+  }
+
+  await params.db.insert(agentCarePlans).values({
+    id: params.id,
+    userId: params.userId,
+    agentId: params.agentId,
+    enabled: params.enabled ? 1 : 0,
+    frequency: params.frequency,
+    preferredTime: params.preferredTime,
+    scenesJson: JSON.stringify(params.scenes),
+    tone: params.tone,
+    customPrompt: params.customPrompt,
+    nextRunAtMs: params.nextRunAtMs,
+    createdAtMs: params.nowMs,
+    updatedAtMs: params.nowMs,
+  })
+
+  return params.id
+}
+
+export async function insertAgentCareEvent(params: {
+  db: ApiDb
+  id: string
+  userId: string
+  agentId: string
+  carePlanId: string | null
+  conversationId: string
+  messageId: string
+  scene: 'morning' | 'night' | 'long_absence' | 'stress_support' | 'relationship_warmup' | 'anniversary'
+  message: string
+  metadataJson?: string | null
+  nowMs: number
+}) {
+  await params.db.insert(agentCareEvents).values({
+    id: params.id,
+    userId: params.userId,
+    agentId: params.agentId,
+    carePlanId: params.carePlanId,
+    conversationId: params.conversationId,
+    messageId: params.messageId,
+    scene: params.scene,
+    status: 'generated',
+    message: params.message,
+    metadataJson: params.metadataJson ?? null,
+    generatedAtMs: params.nowMs,
+    readAtMs: null,
+  })
+}
+
+export async function listAgentCareEvents(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+  limit: number
+}): Promise<Array<{
+  id: string
+  agentId: string
+  carePlanId: string | null
+  conversationId: string
+  messageId: string
+  scene: 'morning' | 'night' | 'long_absence' | 'stress_support' | 'relationship_warmup' | 'anniversary'
+  status: 'generated' | 'read'
+  message: string
+  generatedAtMs: number
+  readAtMs: number | null
+}>> {
+  const rows = await params.db
+    .select({
+      id: agentCareEvents.id,
+      agentId: agentCareEvents.agentId,
+      carePlanId: agentCareEvents.carePlanId,
+      conversationId: agentCareEvents.conversationId,
+      messageId: agentCareEvents.messageId,
+      scene: agentCareEvents.scene,
+      status: agentCareEvents.status,
+      message: agentCareEvents.message,
+      generatedAtMs: agentCareEvents.generatedAtMs,
+      readAtMs: agentCareEvents.readAtMs,
+    })
+    .from(agentCareEvents)
+    .where(and(
+      eq(agentCareEvents.userId, params.userId),
+      eq(agentCareEvents.agentId, params.agentId),
+    ))
+    .orderBy(sql`${agentCareEvents.generatedAtMs} desc, ${agentCareEvents.id} desc`)
+    .limit(params.limit)
+
+  return rows.map((row) => ({
+    id: row.id,
+    agentId: row.agentId,
+    carePlanId: row.carePlanId,
+    conversationId: row.conversationId,
+    messageId: row.messageId,
+    scene: row.scene as 'morning' | 'night' | 'long_absence' | 'stress_support' | 'relationship_warmup' | 'anniversary',
+    status: row.status as 'generated' | 'read',
+    message: row.message,
+    generatedAtMs: row.generatedAtMs,
+    readAtMs: row.readAtMs,
+  }))
+}
+
+export async function findAgentCareEvent(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+  eventId: string
+}): Promise<{
+  id: string
+  agentId: string
+  carePlanId: string | null
+  conversationId: string
+  messageId: string
+  scene: 'morning' | 'night' | 'long_absence' | 'stress_support' | 'relationship_warmup' | 'anniversary'
+  status: 'generated' | 'read'
+  message: string
+  generatedAtMs: number
+  readAtMs: number | null
+} | null> {
+  const row = await params.db
+    .select({
+      id: agentCareEvents.id,
+      agentId: agentCareEvents.agentId,
+      carePlanId: agentCareEvents.carePlanId,
+      conversationId: agentCareEvents.conversationId,
+      messageId: agentCareEvents.messageId,
+      scene: agentCareEvents.scene,
+      status: agentCareEvents.status,
+      message: agentCareEvents.message,
+      generatedAtMs: agentCareEvents.generatedAtMs,
+      readAtMs: agentCareEvents.readAtMs,
+    })
+    .from(agentCareEvents)
+    .where(and(
+      eq(agentCareEvents.id, params.eventId),
+      eq(agentCareEvents.userId, params.userId),
+      eq(agentCareEvents.agentId, params.agentId),
+    ))
+    .limit(1)
+    .get()
+
+  return row
+    ? {
+        id: row.id,
+        agentId: row.agentId,
+        carePlanId: row.carePlanId,
+        conversationId: row.conversationId,
+        messageId: row.messageId,
+        scene: row.scene as 'morning' | 'night' | 'long_absence' | 'stress_support' | 'relationship_warmup' | 'anniversary',
+        status: row.status as 'generated' | 'read',
+        message: row.message,
+        generatedAtMs: row.generatedAtMs,
+        readAtMs: row.readAtMs,
+      }
+    : null
+}
+
+export async function markAgentCareEventsRead(params: {
+  db: ApiDb
+  userId: string
+  agentId: string
+  nowMs: number
+}) {
+  try {
+    await params.db
+      .update(agentCareEvents)
+      .set({
+        status: 'read',
+        readAtMs: params.nowMs,
+      })
+      .where(and(
+        eq(agentCareEvents.userId, params.userId),
+        eq(agentCareEvents.agentId, params.agentId),
+        eq(agentCareEvents.status, 'generated'),
+        isNull(agentCareEvents.readAtMs),
+      ))
+  } catch (error) {
+    console.warn('Agent care read marker is unavailable', error)
+  }
 }
 
 export async function findUserAgentCompanionImageByKey(

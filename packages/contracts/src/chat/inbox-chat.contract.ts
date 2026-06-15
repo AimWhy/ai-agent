@@ -45,6 +45,27 @@ export const InboxChatRequestSchema = z.object({
 })
 
 export const AgentConversationMessageRoleSchema = z.enum(['user', 'assistant'])
+export const AgentMessageFeedbackRatingSchema = z.enum(['positive', 'negative'])
+export const AgentMessageFeedbackReasonSchema = z.enum([
+  'good_tone',
+  'helpful',
+  'warm',
+  'remembered_context',
+  'bad_tone',
+  'too_long',
+  'too_cold',
+  'too_pushy',
+  'wrong_memory',
+  'unsafe',
+  'other',
+])
+
+export const AgentMessageFeedbackSchema = z.object({
+  rating: AgentMessageFeedbackRatingSchema,
+  reason: AgentMessageFeedbackReasonSchema.nullable(),
+  note: z.string().nullable(),
+  updatedAtMs: z.number().int().nonnegative(),
+})
 
 export const AgentConversationMessageSchema = z.object({
   id: z.string().min(1),
@@ -54,6 +75,7 @@ export const AgentConversationMessageSchema = z.object({
   content: z.string(),
   status: z.enum(['completed', 'failed']),
   createdAtMs: z.number().int().nonnegative(),
+  feedback: AgentMessageFeedbackSchema.nullable(),
 })
 
 export const AgentConversationResponseSchema = z.object({
@@ -72,12 +94,28 @@ export const AgentConversationMessagesResponseSchema = z.object({
   nextCursor: z.string().nullable(),
 })
 
+export const SubmitAgentMessageFeedbackRequestSchema = z.object({
+  rating: AgentMessageFeedbackRatingSchema,
+  reason: AgentMessageFeedbackReasonSchema.optional().nullable(),
+  note: z.string().trim().max(500).optional().nullable(),
+})
+
+export const SubmitAgentMessageFeedbackResponseSchema = z.object({
+  messageId: z.string().min(1),
+  feedback: AgentMessageFeedbackSchema,
+})
+
 export type InboxChatMessage = z.infer<typeof InboxChatMessageSchema>
 export type InboxChatLlmWireApi = z.infer<typeof InboxChatLlmWireApiSchema>
 export type InboxChatLlmReasoningEffort = z.infer<typeof InboxChatLlmReasoningEffortSchema>
 export type InboxChatLlmConfig = z.infer<typeof InboxChatLlmConfigSchema>
 export type InboxChatRequest = z.infer<typeof InboxChatRequestSchema>
 export type AgentConversationMessageRole = z.infer<typeof AgentConversationMessageRoleSchema>
+export type AgentMessageFeedbackRating = z.infer<typeof AgentMessageFeedbackRatingSchema>
+export type AgentMessageFeedbackReason = z.infer<typeof AgentMessageFeedbackReasonSchema>
+export type AgentMessageFeedback = z.infer<typeof AgentMessageFeedbackSchema>
 export type AgentConversationMessage = z.infer<typeof AgentConversationMessageSchema>
 export type AgentConversationResponse = z.infer<typeof AgentConversationResponseSchema>
 export type AgentConversationMessagesResponse = z.infer<typeof AgentConversationMessagesResponseSchema>
+export type SubmitAgentMessageFeedbackRequest = z.infer<typeof SubmitAgentMessageFeedbackRequestSchema>
+export type SubmitAgentMessageFeedbackResponse = z.infer<typeof SubmitAgentMessageFeedbackResponseSchema>

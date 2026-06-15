@@ -288,6 +288,160 @@ export const agentMemories = sqliteTable(
   ],
 )
 
+export const agentMessageFeedbacks = sqliteTable(
+  'agent_message_feedbacks',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => userAgentCompanions.id, { onDelete: 'cascade' }),
+    conversationId: text('conversation_id')
+      .notNull()
+      .references(() => agentConversations.id, { onDelete: 'cascade' }),
+    messageId: text('message_id')
+      .notNull()
+      .references(() => agentConversationMessages.id, { onDelete: 'cascade' }),
+    rating: text('rating').notNull(),
+    reason: text('reason'),
+    note: text('note'),
+    createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_agent_message_feedbacks_user_message_unique').on(table.userId, table.messageId),
+    index('idx_agent_message_feedbacks_agent_updated').on(table.userId, table.agentId, table.updatedAtMs),
+    index('idx_agent_message_feedbacks_message').on(table.messageId),
+  ],
+)
+
+export const agentCarePlans = sqliteTable(
+  'agent_care_plans',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => userAgentCompanions.id, { onDelete: 'cascade' }),
+    enabled: integer('enabled').notNull(),
+    frequency: text('frequency').notNull(),
+    preferredTime: text('preferred_time'),
+    scenesJson: text('scenes_json').notNull(),
+    tone: text('tone').notNull(),
+    customPrompt: text('custom_prompt'),
+    nextRunAtMs: integer('next_run_at_ms'),
+    createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_agent_care_plans_user_agent_unique').on(table.userId, table.agentId),
+    index('idx_agent_care_plans_next_run').on(table.enabled, table.nextRunAtMs),
+  ],
+)
+
+export const agentCareEvents = sqliteTable(
+  'agent_care_events',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => userAgentCompanions.id, { onDelete: 'cascade' }),
+    carePlanId: text('care_plan_id').references(() => agentCarePlans.id, { onDelete: 'set null' }),
+    conversationId: text('conversation_id')
+      .notNull()
+      .references(() => agentConversations.id, { onDelete: 'cascade' }),
+    messageId: text('message_id')
+      .notNull()
+      .references(() => agentConversationMessages.id, { onDelete: 'cascade' }),
+    scene: text('scene').notNull(),
+    status: text('status').notNull(),
+    message: text('message').notNull(),
+    metadataJson: text('metadata_json'),
+    generatedAtMs: integer('generated_at_ms').notNull(),
+    readAtMs: integer('read_at_ms'),
+  },
+  (table) => [
+    index('idx_agent_care_events_agent_generated').on(table.userId, table.agentId, table.generatedAtMs),
+    index('idx_agent_care_events_message').on(table.messageId),
+  ],
+)
+
+export const agentGroupChats = sqliteTable(
+  'agent_group_chats',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    summary: text('summary'),
+    messageCount: integer('message_count').notNull(),
+    lastMessageAtMs: integer('last_message_at_ms'),
+    createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+  },
+  (table) => [
+    index('idx_agent_group_chats_user_updated').on(table.userId, table.updatedAtMs, table.id),
+  ],
+)
+
+export const agentGroupChatMembers = sqliteTable(
+  'agent_group_chat_members',
+  {
+    id: text('id').primaryKey(),
+    groupChatId: text('group_chat_id')
+      .notNull()
+      .references(() => agentGroupChats.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => userAgentCompanions.id, { onDelete: 'cascade' }),
+    displayOrder: integer('display_order').notNull(),
+    status: text('status').notNull(),
+    joinedAtMs: integer('joined_at_ms').notNull(),
+    removedAtMs: integer('removed_at_ms'),
+  },
+  (table) => [
+    uniqueIndex('idx_agent_group_chat_members_unique_active')
+      .on(table.groupChatId, table.agentId)
+      .where(sql`${table.status} = 'active'`),
+    index('idx_agent_group_chat_members_group_order').on(table.groupChatId, table.status, table.displayOrder, table.id),
+  ],
+)
+
+export const agentGroupChatMessages = sqliteTable(
+  'agent_group_chat_messages',
+  {
+    id: text('id').primaryKey(),
+    groupChatId: text('group_chat_id')
+      .notNull()
+      .references(() => agentGroupChats.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    senderType: text('sender_type').notNull(),
+    agentId: text('agent_id').references(() => userAgentCompanions.id, { onDelete: 'set null' }),
+    content: text('content').notNull(),
+    status: text('status').notNull(),
+    turnIndex: integer('turn_index').notNull(),
+    metadataJson: text('metadata_json'),
+    createdAtMs: integer('created_at_ms').notNull(),
+  },
+  (table) => [
+    index('idx_agent_group_chat_messages_group_created').on(table.groupChatId, table.createdAtMs, table.id),
+    index('idx_agent_group_chat_messages_user_group').on(table.userId, table.groupChatId, table.createdAtMs),
+  ],
+)
+
 export const userRoleBindings = sqliteTable(
   'user_role_bindings',
   {

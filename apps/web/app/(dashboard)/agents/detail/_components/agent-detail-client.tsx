@@ -5,29 +5,44 @@ import { useEffect, useMemo, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import type {
+  AgentCareFrequency,
+  AgentCarePlan,
+  AgentCareScene,
+  AgentCareTone,
   MyAgentCompanionDetailResponse,
+  UpsertAgentCarePlanRequest,
   UpdateMyAgentCompanionRequest,
 } from "@repo/contracts"
 import {
   ArrowLeft,
   BadgeCheck,
+  Bell,
   BookOpenText,
   Bot,
+  CalendarDays,
   CheckCircle2,
   Clock3,
+  Heart,
   ImagePlus,
   Loader2,
   MessageCircle,
   Mic2,
+  Moon,
   Save,
   ShieldCheck,
   Sparkles,
+  Sun,
   Wand2,
+  type LucideIcon,
 } from "lucide-react"
 
 import { DashboardShell } from "../../../_components/dashboard-shell"
 import {
+  generateAgentCareEvent,
+  getAgentCareEvents,
+  getAgentCarePlan,
   getMyAgentCompanionDetail,
+  updateAgentCarePlan,
   updateMyAgentCompanion,
   uploadMyAgentCompanionImage,
 } from "@/auth/api"
@@ -59,6 +74,41 @@ const completionChecks = [
   { label: "默认开场", field: "openingMessage" },
 ] as const
 
+const careSceneOptions: Array<{
+  value: AgentCareScene
+  label: string
+  description: string
+  icon: LucideIcon
+}> = [
+  { value: "morning", label: "早安", description: "开始一天时轻轻问候", icon: Sun },
+  { value: "night", label: "晚安", description: "睡前陪伴和情绪收束", icon: Moon },
+  { value: "long_absence", label: "久未聊天", description: "一段时间没互动时出现", icon: Bell },
+  { value: "stress_support", label: "压力陪伴", description: "用户可能忙碌或疲惫时关心", icon: Heart },
+  { value: "relationship_warmup", label: "关系升温", description: "让互动自然变得更亲近", icon: Sparkles },
+  { value: "anniversary", label: "纪念日", description: "特殊节点的轻量提醒", icon: CalendarDays },
+]
+
+const careFrequencyLabels: Record<AgentCareFrequency, string> = {
+  daily: "每天",
+  weekly: "每周",
+  custom: "自定义",
+}
+
+const careToneLabels: Record<AgentCareTone, string> = {
+  light: "轻一点",
+  gentle: "温柔一点",
+  intimate: "亲密一点",
+}
+
+const defaultCareForm: UpsertAgentCarePlanRequest = {
+  enabled: false,
+  frequency: "daily",
+  preferredTime: "21:30",
+  scenes: ["long_absence", "night"],
+  tone: "gentle",
+  customPrompt: "",
+}
+
 const agentImageMaxBytes = 2 * 1024 * 1024
 const agentImageMinWidth = 720
 const agentImageMinHeight = 1080
@@ -84,6 +134,17 @@ function normalizeAgentDetail(detail: MyAgentCompanionDetailResponse): UpdateMyA
     imageKey: detail.imageKey,
     visibility: detail.visibility ?? "private",
     status: detail.status === "published" ? "published" : "draft",
+  }
+}
+
+function normalizeCarePlan(plan: AgentCarePlan): UpsertAgentCarePlanRequest {
+  return {
+    enabled: plan.enabled,
+    frequency: plan.frequency,
+    preferredTime: plan.preferredTime ?? "21:30",
+    scenes: plan.scenes,
+    tone: plan.tone,
+    customPrompt: plan.customPrompt ?? "",
   }
 }
 
@@ -187,13 +248,29 @@ export function AgentDetailClient() {
     queryFn: () => getMyAgentCompanionDetail(agentId),
     enabled: Boolean(agentId),
   })
+  const carePlanQuery = useQuery({
+    queryKey: ["agent-care-plan", agentId],
+    queryFn: () => getAgentCarePlan(agentId),
+    enabled: Boolean(agentId),
+  })
+  const careEventsQuery = useQuery({
+    queryKey: ["agent-care-events", agentId],
+    queryFn: () => getAgentCareEvents(agentId),
+    enabled: Boolean(agentId),
+  })
   const [form, setForm] = useState<UpdateMyAgentCompanionRequest | null>(null)
+  const [careForm, setCareForm] = useState<UpsertAgentCarePlanRequest>(defaultCareForm)
   const [isSaving, setIsSaving] = useState(false)
+  const [isSavingCarePlan, setIsSavingCarePlan] = useState(false)
+  const [isGeneratingCareEvent, setIsGeneratingCareEvent] = useState(false)
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [imagePreviewUrl, setImagePreviewUrl] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
   const [successMessage, setSuccessMessage] = useState("")
+  const [careErrorMessage, setCareErrorMessage] = useState("")
+  const [careSuccessMessage, setCareSuccessMessage] = useState("")
   const [detailSnapshot, setDetailSnapshot] = useState<MyAgentCompanionDetailResponse | null>(null)
+  const [carePlanSnapshot, setCarePlanSnapshot] = useState<AgentCarePlan | null>(null)
   const previewPrompt = useMemo(() => (form ? buildPreviewPrompt(form) : ""), [form])
   const completedCount = form
     ? completionChecks.filter((item) => String(form[item.field]).trim()).length
@@ -210,6 +287,24 @@ export function AgentDetailClient() {
   }, [agentQuery.data])
 
   useEffect(() => {
+    if (!carePlanQuery.data?.plan) {
+      return
+    }
+
+    setCareForm(normalizeCarePlan(carePlanQuery.data.plan))
+    setCarePlanSnapshot(carePlanQuery.data.plan)
+    setCareErrorMessage("")
+  }, [carePlanQuery.data])
+
+  useEffect(() => {
+    if (!carePlanQuery.isError) {
+      return
+    }
+
+    setCareErrorMessage("主动关怀计划加载失败，请确认 API 已部署并完成最新 D1 迁移。")
+  }, [carePlanQuery.isError])
+
+  useEffect(() => {
     return () => {
       if (imagePreviewUrl) {
         URL.revokeObjectURL(imagePreviewUrl)
@@ -224,6 +319,31 @@ export function AgentDetailClient() {
     setForm((current) => (current ? { ...current, [key]: value } : current))
     setErrorMessage("")
     setSuccessMessage("")
+  }
+
+  function updateCareField<K extends keyof UpsertAgentCarePlanRequest>(
+    key: K,
+    value: UpsertAgentCarePlanRequest[K],
+  ) {
+    setCareForm((current) => ({ ...current, [key]: value }))
+    setCareErrorMessage("")
+    setCareSuccessMessage("")
+  }
+
+  function toggleCareScene(scene: AgentCareScene) {
+    setCareForm((current) => {
+      const exists = current.scenes.includes(scene)
+      const scenes = exists
+        ? current.scenes.filter((item) => item !== scene)
+        : [...current.scenes, scene]
+
+      return {
+        ...current,
+        scenes: scenes.length > 0 ? scenes : [scene],
+      }
+    })
+    setCareErrorMessage("")
+    setCareSuccessMessage("")
   }
 
   async function handleImageChange(file: File | null) {
@@ -312,6 +432,54 @@ export function AgentDetailClient() {
     }
   }
 
+  async function handleSaveCarePlan() {
+    if (!agentId) {
+      return
+    }
+
+    if (careForm.scenes.length === 0) {
+      setCareErrorMessage("请至少选择一个主动关怀场景。")
+      setCareSuccessMessage("")
+      return
+    }
+
+    setIsSavingCarePlan(true)
+    setCareErrorMessage("")
+    setCareSuccessMessage("")
+
+    try {
+      const response = await updateAgentCarePlan(agentId, careForm)
+      setCareForm(normalizeCarePlan(response.plan))
+      setCarePlanSnapshot(response.plan)
+      setCareSuccessMessage("主动关怀计划已保存。")
+      void carePlanQuery.refetch()
+    } catch (error) {
+      setCareErrorMessage(error instanceof Error ? error.message : "保存主动关怀失败，请稍后重试。")
+    } finally {
+      setIsSavingCarePlan(false)
+    }
+  }
+
+  async function handleGenerateCareEvent(scene?: AgentCareScene) {
+    if (!agentId) {
+      return
+    }
+
+    setIsGeneratingCareEvent(true)
+    setCareErrorMessage("")
+    setCareSuccessMessage("")
+
+    try {
+      const response = await generateAgentCareEvent(agentId, scene ? { scene } : {})
+      setCareSuccessMessage(`已生成一条主动关怀：${response.event.message}`)
+      void careEventsQuery.refetch()
+    } catch (error) {
+      setCareErrorMessage(error instanceof Error ? error.message : "生成主动关怀失败，请稍后重试。")
+    } finally {
+      setIsGeneratingCareEvent(false)
+    }
+  }
+
   if (!agentId) {
     return (
       <DashboardShell title="Agent 详情">
@@ -374,6 +542,8 @@ export function AgentDetailClient() {
   }
 
   const detail = detailSnapshot ?? agentQuery.data
+  const carePlan = carePlanSnapshot ?? carePlanQuery.data?.plan ?? null
+  const careEvents = careEventsQuery.data?.items ?? []
 
   return (
     <DashboardShell title="Agent 详情">
@@ -654,6 +824,206 @@ export function AgentDetailClient() {
                   </>
                 )}
               </Button>
+            </section>
+
+            <section className="rounded-2xl bg-white p-4">
+              <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
+                <div>
+                  <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                    <Bell className="size-4 text-slate-500" />
+                    主动关怀
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    让 Agent 在合适的场景里主动出现，先生成站内聊天消息。
+                  </p>
+                </div>
+                <button
+                  aria-label="切换主动关怀"
+                  className={cn(
+                    "relative h-6 w-11 rounded-full border transition-colors",
+                    careForm.enabled ? "border-slate-900 bg-slate-900" : "border-slate-200 bg-slate-100",
+                  )}
+                  onClick={() => updateCareField("enabled", !careForm.enabled)}
+                  type="button"
+                >
+                  <span
+                    className={cn(
+                      "absolute top-0.5 size-5 rounded-full bg-white transition-transform",
+                      careForm.enabled ? "translate-x-5" : "translate-x-0.5",
+                    )}
+                  />
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="grid gap-1.5">
+                    <span className="text-xs font-medium text-slate-500">频率</span>
+                    <Select
+                      onValueChange={(value) => updateCareField("frequency", value as AgentCareFrequency)}
+                      value={careForm.frequency}
+                    >
+                      <SelectTrigger className="h-9 w-full rounded-xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="shadow-none">
+                        <SelectItem value="daily">每天</SelectItem>
+                        <SelectItem value="weekly">每周</SelectItem>
+                        <SelectItem value="custom">自定义</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </label>
+
+                  <label className="grid gap-1.5">
+                    <span className="text-xs font-medium text-slate-500">时间</span>
+                    <Input
+                      className="h-9 rounded-xl"
+                      onChange={(event) => updateCareField("preferredTime", event.currentTarget.value)}
+                      placeholder="21:30"
+                      value={careForm.preferredTime ?? ""}
+                    />
+                  </label>
+                </div>
+
+                <label className="grid gap-1.5">
+                  <span className="text-xs font-medium text-slate-500">语气强度</span>
+                  <Select
+                    onValueChange={(value) => updateCareField("tone", value as AgentCareTone)}
+                    value={careForm.tone}
+                  >
+                    <SelectTrigger className="h-9 w-full rounded-xl">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="shadow-none">
+                      <SelectItem value="light">轻一点</SelectItem>
+                      <SelectItem value="gentle">温柔一点</SelectItem>
+                      <SelectItem value="intimate">亲密一点</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </label>
+
+                <div className="grid gap-2">
+                  <span className="text-xs font-medium text-slate-500">关怀场景</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {careSceneOptions.map((scene) => {
+                      const Icon = scene.icon
+                      const selected = careForm.scenes.includes(scene.value)
+
+                      return (
+                        <button
+                          className={cn(
+                            "min-h-16 border px-2.5 py-2 text-left transition-colors",
+                            selected
+                              ? "border-slate-900 bg-slate-950 text-white"
+                              : "border-slate-200 bg-slate-50/70 text-slate-600 hover:bg-white",
+                          )}
+                          key={scene.value}
+                          onClick={() => toggleCareScene(scene.value)}
+                          type="button"
+                        >
+                          <span className="flex items-center gap-1.5 text-xs font-semibold">
+                            <Icon className="size-3.5" />
+                            {scene.label}
+                          </span>
+                          <span className={cn("mt-1 line-clamp-2 block text-[11px] leading-4", selected ? "text-white/70" : "text-slate-400")}>
+                            {scene.description}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <label className="grid gap-1.5">
+                  <span className="text-xs font-medium text-slate-500">自定义关怀提示</span>
+                  <Textarea
+                    className="min-h-20 resize-none rounded-xl bg-slate-50/70 text-sm leading-6"
+                    onChange={(event) => updateCareField("customPrompt", event.currentTarget.value)}
+                    placeholder="例如：最近辛苦了，记得先照顾好自己。"
+                    value={careForm.customPrompt ?? ""}
+                  />
+                </label>
+
+                <div className="grid grid-cols-2 gap-2 border-y border-slate-200 py-3">
+                  <div>
+                    <p className="text-[10px] font-medium text-slate-400">当前状态</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-800">
+                      {careForm.enabled ? "已开启" : "未开启"} · {careFrequencyLabels[careForm.frequency]}
+                    </p>
+                  </div>
+                  <div className="border-l border-slate-200 pl-3">
+                    <p className="text-[10px] font-medium text-slate-400">下次计划</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-800">
+                      {formatDateTime(carePlan?.nextRunAtMs ?? null)}
+                    </p>
+                  </div>
+                </div>
+
+                {careErrorMessage ? (
+                  <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+                    {careErrorMessage}
+                  </p>
+                ) : null}
+                {careSuccessMessage ? (
+                  <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm leading-6 text-emerald-700">
+                    {careSuccessMessage}
+                  </p>
+                ) : null}
+
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    className="h-9 rounded-full"
+                    disabled={isSavingCarePlan}
+                    onClick={handleSaveCarePlan}
+                    type="button"
+                    variant="outline"
+                  >
+                    {isSavingCarePlan ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                    保存
+                  </Button>
+                  <Button
+                    className="h-9 rounded-full"
+                    disabled={isGeneratingCareEvent}
+                    onClick={() => {
+                      void handleGenerateCareEvent(careForm.scenes[0])
+                    }}
+                    type="button"
+                  >
+                    {isGeneratingCareEvent ? <Loader2 className="size-4 animate-spin" /> : <MessageCircle className="size-4" />}
+                    生成
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-4 border-t border-slate-200 pt-3">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold text-slate-700">最近关怀</p>
+                  <span className="text-[11px] font-medium text-slate-400">
+                    {careToneLabels[careForm.tone]}
+                  </span>
+                </div>
+                {careEventsQuery.isLoading ? (
+                  <div className="h-16 animate-pulse rounded-xl bg-slate-50" />
+                ) : careEvents.length === 0 ? (
+                  <p className="rounded-xl bg-slate-50/80 px-3 py-3 text-xs leading-5 text-slate-500">
+                    暂无主动关怀记录。可以先点击生成，预览它进入聊天历史后的效果。
+                  </p>
+                ) : (
+                  <div className="grid gap-2">
+                    {careEvents.slice(0, 3).map((event) => (
+                      <div className="border-l border-slate-200 bg-slate-50/70 px-3 py-2" key={event.id}>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[11px] font-medium text-slate-400">
+                            {careSceneOptions.find((scene) => scene.value === event.scene)?.label ?? event.scene}
+                          </span>
+                          <span className="text-[11px] text-slate-400">{formatDateTime(event.generatedAtMs)}</span>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{event.message}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </section>
 
             <section className="rounded-2xl bg-white p-4">

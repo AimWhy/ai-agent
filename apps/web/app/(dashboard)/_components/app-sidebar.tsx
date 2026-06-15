@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Bot, Brain, Coins, Command, Compass, Heart, Inbox, PlugZap, Sparkles, UserRound } from "lucide-react"
+import { Bot, Brain, Coins, Command, Compass, Heart, Inbox, MessagesSquare, PlugZap, Sparkles, UserRound } from "lucide-react"
 
 import { useWebDashboardContext } from "@/components/web-dashboard-guard"
 import { NavUser } from "./nav-user"
@@ -24,6 +24,11 @@ const data = {
       title: "聊天",
       url: "/",
       icon: Inbox,
+    },
+    {
+      title: "Agent 群聊",
+      url: "/group-chats",
+      icon: MessagesSquare,
     },
     {
       title: "发现",

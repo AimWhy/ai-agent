@@ -50,6 +50,71 @@ export const MyAgentCompanionDetailResponseSchema = z.object({
 
 export const UpdateMyAgentCompanionResponseSchema = MyAgentCompanionDetailResponseSchema
 
+export const AgentCareSceneSchema = z.enum([
+  'morning',
+  'night',
+  'long_absence',
+  'stress_support',
+  'relationship_warmup',
+  'anniversary',
+])
+
+export const AgentCareFrequencySchema = z.enum(['daily', 'weekly', 'custom'])
+
+export const AgentCareToneSchema = z.enum(['light', 'gentle', 'intimate'])
+
+export const AgentCarePlanSchema = z.object({
+  id: z.string().min(1),
+  agentId: z.string().min(1),
+  enabled: z.boolean(),
+  frequency: AgentCareFrequencySchema,
+  preferredTime: z.string().max(20).nullable(),
+  scenes: z.array(AgentCareSceneSchema).min(1).max(6),
+  tone: AgentCareToneSchema,
+  customPrompt: z.string().max(800).nullable(),
+  nextRunAtMs: z.number().int().nonnegative().nullable(),
+  createdAtMs: z.number().int().nonnegative(),
+  updatedAtMs: z.number().int().nonnegative(),
+})
+
+export const UpsertAgentCarePlanRequestSchema = z.object({
+  enabled: z.boolean(),
+  frequency: AgentCareFrequencySchema,
+  preferredTime: z.string().trim().max(20).optional().nullable(),
+  scenes: z.array(AgentCareSceneSchema).min(1).max(6),
+  tone: AgentCareToneSchema,
+  customPrompt: z.string().trim().max(800).optional().nullable(),
+})
+
+export const AgentCarePlanResponseSchema = z.object({
+  plan: AgentCarePlanSchema,
+})
+
+export const AgentCareEventSchema = z.object({
+  id: z.string().min(1),
+  agentId: z.string().min(1),
+  carePlanId: z.string().nullable(),
+  conversationId: z.string().min(1),
+  messageId: z.string().min(1),
+  scene: AgentCareSceneSchema,
+  status: z.enum(['generated', 'read']),
+  message: z.string().min(1).max(2000),
+  generatedAtMs: z.number().int().nonnegative(),
+  readAtMs: z.number().int().nonnegative().nullable(),
+})
+
+export const AgentCareEventsResponseSchema = z.object({
+  items: z.array(AgentCareEventSchema),
+})
+
+export const GenerateAgentCareEventRequestSchema = z.object({
+  scene: AgentCareSceneSchema.optional(),
+})
+
+export const GenerateAgentCareEventResponseSchema = z.object({
+  event: AgentCareEventSchema,
+})
+
 export const MyAgentInboxItemSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(120),
@@ -118,6 +183,16 @@ export type MyAgentInboxItem = z.infer<typeof MyAgentInboxItemSchema>
 export type MyAgentCompanionDetailResponse = z.infer<typeof MyAgentCompanionDetailResponseSchema>
 export type MyAgentSummaryResponse = z.infer<typeof MyAgentSummaryResponseSchema>
 export type MyAgentInboxResponse = z.infer<typeof MyAgentInboxResponseSchema>
+export type AgentCareScene = z.infer<typeof AgentCareSceneSchema>
+export type AgentCareFrequency = z.infer<typeof AgentCareFrequencySchema>
+export type AgentCareTone = z.infer<typeof AgentCareToneSchema>
+export type AgentCarePlan = z.infer<typeof AgentCarePlanSchema>
+export type UpsertAgentCarePlanRequest = z.infer<typeof UpsertAgentCarePlanRequestSchema>
+export type AgentCarePlanResponse = z.infer<typeof AgentCarePlanResponseSchema>
+export type AgentCareEvent = z.infer<typeof AgentCareEventSchema>
+export type AgentCareEventsResponse = z.infer<typeof AgentCareEventsResponseSchema>
+export type GenerateAgentCareEventRequest = z.infer<typeof GenerateAgentCareEventRequestSchema>
+export type GenerateAgentCareEventResponse = z.infer<typeof GenerateAgentCareEventResponseSchema>
 export type AgentMemory = z.infer<typeof AgentMemorySchema>
 export type MyAgentMemoriesResponse = z.infer<typeof MyAgentMemoriesResponseSchema>
 export type UpdateAgentMemoryRequest = z.infer<typeof UpdateAgentMemoryRequestSchema>

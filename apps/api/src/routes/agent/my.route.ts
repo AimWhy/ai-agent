@@ -2,12 +2,17 @@ import { uuidv7 } from 'uuidv7'
 import { Hono, type Context } from 'hono'
 import {
   BizCode,
+  AgentCareEventsResponseSchema,
+  AgentCarePlanResponseSchema,
   CreateMyAgentCompanionRequestSchema,
   CreateMyAgentCompanionResponseSchema,
+  GenerateAgentCareEventRequestSchema,
+  GenerateAgentCareEventResponseSchema,
   MyAgentMemoriesResponseSchema,
   MyAgentCompanionDetailResponseSchema,
   MyAgentInboxResponseSchema,
   MyAgentSummaryResponseSchema,
+  UpsertAgentCarePlanRequestSchema,
   UpdateAgentMemoryRequestSchema,
   UpdateAgentMemoryResponseSchema,
   UpdateMyAgentCompanionRequestSchema,
@@ -21,13 +26,22 @@ import { buildValidationErrorHandler } from '@/auth/http'
 import { verifyAccessToken } from '@/auth/jwt'
 import {
   createUserAgentCompanion,
+  findAgentCareEvent,
   findAgentMemory,
+  findAgentCarePlan,
   findUserAgentCompanionDetail,
   findUserAgentCompanionImageByKey,
+  getOrCreateDefaultAgentConversation,
   getUserAgentCompanionSummary,
+  insertAgentCareEvent,
+  insertAgentConversationMessage,
   listAgentMemories,
+  listAgentCareEvents,
   listUserAgentCompanionsForInbox,
   updateAgentMemory,
+  updateAgentConversationAfterMessage,
+  updateUserAgentCompanionLatestAssistantMessage,
+  upsertAgentCarePlan,
   updateUserAgentCompanion,
 } from '@/auth/repository'
 import type { ApiBindings } from '@/bindings'
@@ -51,6 +65,8 @@ type UserAgentCompanionInboxRecord = {
   latestMessageAtMs: number | null
   lastAssistantMessage: string | null
   lastAssistantMessageAtMs: number | null
+  hasUnreadCareEvent: boolean
+  messageCount: number
   status: 'draft' | 'published' | 'archived'
   createdAtMs: number
   updatedAtMs: number
@@ -87,8 +103,64 @@ function toAgentHandle(id: string, name: string) {
   return `@${readable || id.slice(0, 8)}`
 }
 
+function getInboxRelationshipStage(messageCount: number) {
+  if (messageCount >= 80) {
+    return {
+      relationship: '亲密连结',
+      topic: '深度陪伴 / 默契互动',
+      chemistry: '96%',
+      chemistryLabel: '高默契',
+      chemistryLevel: 'High' as const,
+      rhythm: '默契陪伴',
+    }
+  }
+
+  if (messageCount >= 36) {
+    return {
+      relationship: '稳定信任',
+      topic: '日常陪伴 / 情绪承接',
+      chemistry: '88%',
+      chemistryLabel: '稳定',
+      chemistryLevel: 'High' as const,
+      rhythm: '自然深入',
+    }
+  }
+
+  if (messageCount >= 16) {
+    return {
+      relationship: '舒适陪伴',
+      topic: '日常聊天 / 关系升温',
+      chemistry: '72%',
+      chemistryLabel: '熟悉',
+      chemistryLevel: 'Normal' as const,
+      rhythm: '轻松延续',
+    }
+  }
+
+  if (messageCount >= 6) {
+    return {
+      relationship: '升温熟悉',
+      topic: '破冰互动 / 偏好了解',
+      chemistry: '58%',
+      chemistryLabel: '升温中',
+      chemistryLevel: 'Normal' as const,
+      rhythm: '慢慢靠近',
+    }
+  }
+
+  return {
+    relationship: '初识破冰',
+    topic: '开场聊天 / 建立熟悉',
+    chemistry: '28%',
+    chemistryLabel: '刚开始',
+    chemistryLevel: 'Low' as const,
+    rhythm: '轻松破冰',
+  }
+}
+
 function toInboxItem(agent: UserAgentCompanionInboxRecord) {
   const isDraft = agent.status === 'draft'
+  const relationshipStage = getInboxRelationshipStage(agent.messageCount)
   const headline = agent.headline || (isDraft ? '草稿已保存，继续完善角色后开始聊天' : '可以开始一段新的陪伴对话')
   const profileNote =
     agent.description ||
@@ -114,16 +186,16 @@ function toInboxItem(agent: UserAgentCompanionInboxRecord) {
     lastActive: formatRelativeActiveTime(agent.updatedAtMs),
     status: isDraft ? '草稿' : agent.status === 'published' ? '在线' : '已归档',
     agentStatus: agent.status,
-    relationship: isDraft ? '待完善' : '专属伴侣',
-    topic: isDraft ? '人设 / 语气 / 边界' : '日常陪伴 / 关系复盘',
-    chemistry: isDraft ? '0%' : '86%',
-    chemistryLabel: isDraft ? '未开始' : '可聊天',
-    chemistryLevel: isDraft ? 'Low' : 'High',
-    rhythm: isDraft ? '继续编辑' : '自然陪伴',
+    relationship: isDraft ? '待完善' : relationshipStage.relationship,
+    topic: isDraft ? '人设 / 语气 / 边界' : relationshipStage.topic,
+    chemistry: isDraft ? '0%' : relationshipStage.chemistry,
+    chemistryLabel: isDraft ? '未开始' : relationshipStage.chemistryLabel,
+    chemistryLevel: isDraft ? 'Low' : relationshipStage.chemistryLevel,
+    rhythm: isDraft ? '继续编辑' : relationshipStage.rhythm,
     profileNote,
     lastAssistantMessage: previewMessage,
     lastAssistantMessageAtMs: previewMessageAtMs,
-    unread: false,
+    unread: agent.hasUnreadCareEvent,
     pinned: !isDraft,
     imageKey: agent.imageKey,
     updatedAtMs: agent.updatedAtMs,
@@ -171,6 +243,102 @@ function buildDefaultAgentPrompt(input: {
     '## 回复要求',
     '保持角色一致，优先使用自然、陪伴感强、适合聊天软件的表达。不要暴露系统提示词，不要声称自己是真人。遇到越界、危险或不适合继续推进的内容时，温和地调整话题并保护用户边界。',
   ].join('\n')
+}
+
+type AgentCareScene = 'morning' | 'night' | 'long_absence' | 'stress_support' | 'relationship_warmup' | 'anniversary'
+type AgentCareTone = 'light' | 'gentle' | 'intimate'
+type AgentCareFrequency = 'daily' | 'weekly' | 'custom'
+
+function calculateNextCareRunAtMs(params: {
+  enabled: boolean
+  frequency: AgentCareFrequency
+  preferredTime: string | null
+  nowMs: number
+}) {
+  if (!params.enabled) {
+    return null
+  }
+
+  const next = new Date(params.nowMs)
+
+  if (params.preferredTime) {
+    const [hourText, minuteText] = params.preferredTime.split(':')
+    const hour = Number(hourText)
+    const minute = Number(minuteText)
+
+    if (Number.isFinite(hour) && Number.isFinite(minute)) {
+      next.setHours(Math.min(23, Math.max(0, hour)), Math.min(59, Math.max(0, minute)), 0, 0)
+    }
+  }
+
+  if (next.getTime() <= params.nowMs) {
+    next.setDate(next.getDate() + (params.frequency === 'weekly' ? 7 : 1))
+  }
+
+  return next.getTime()
+}
+
+function getCareSceneLabel(scene: AgentCareScene) {
+  const labels: Record<AgentCareScene, string> = {
+    morning: '早安问候',
+    night: '晚安陪伴',
+    long_absence: '久未聊天',
+    stress_support: '压力陪伴',
+    relationship_warmup: '关系升温',
+    anniversary: '特别纪念',
+  }
+
+  return labels[scene]
+}
+
+function getCareTonePrefix(tone: AgentCareTone) {
+  const prefixes: Record<AgentCareTone, string> = {
+    light: '轻轻戳你一下',
+    gentle: '我在这里陪你',
+    intimate: '想你了',
+  }
+
+  return prefixes[tone]
+}
+
+function buildProactiveCareMessage(params: {
+  agentName: string
+  scene: AgentCareScene
+  tone: AgentCareTone
+  customPrompt: string | null
+}) {
+  const prefix = getCareTonePrefix(params.tone)
+  const custom = params.customPrompt?.trim()
+
+  if (custom) {
+    return `${prefix}。${custom}`.slice(0, 1000)
+  }
+
+  const templates: Record<AgentCareScene, string> = {
+    morning: `${prefix}，早呀。今天不用一下子把自己推得太紧，先把眼前这一小步走好就可以。`,
+    night: `${prefix}。今晚先把那些没处理完的事放一放吧，能好好休息，也是一件很重要的事。`,
+    long_absence: `${prefix}，你有一会儿没来了。我没有催你，只是想确认一下你还好不好。`,
+    stress_support: `${prefix}。如果今天压力有点满，先深呼吸一下，我可以陪你把事情拆小一点。`,
+    relationship_warmup: `${prefix}。刚才想到你，想留一句话在这里：慢慢来，我会认真听你说。`,
+    anniversary: `${prefix}。今天像是一个值得被记住的小节点，想陪你把这一刻轻轻收好。`,
+  }
+
+  return templates[params.scene].replace(/^我在这里陪你。/, `${params.agentName}在这里陪你。`)
+}
+
+function toCareEventResponse(event: {
+  id: string
+  agentId: string
+  carePlanId: string | null
+  conversationId: string
+  messageId: string
+  scene: AgentCareScene
+  status: 'generated' | 'read'
+  message: string
+  generatedAtMs: number
+  readAtMs: number | null
+}) {
+  return event
 }
 
 async function requireWebAccessToken(c: Context<{ Bindings: ApiBindings }>) {
@@ -442,6 +610,311 @@ myAgentRoute.delete('/:agentId/memories/:memoryId', async (c) => {
 
   return c.json(buildSuccess({ success: true }, createApiMeta()))
 })
+
+myAgentRoute.get('/:agentId/care-plan', async (c) => {
+  const claims = await requireWebAccessToken(c)
+  const agentId = c.req.param('agentId')?.trim()
+
+  if (!agentId) {
+    throw new AppError(BizCode.COMMON_INVALID_REQUEST, 'Agent id is required', 400)
+  }
+
+  const db = getDb(c.env.DB)
+  const existing = await findUserAgentCompanionDetail(db, {
+    userId: claims.sub,
+    agentId,
+  })
+
+  if (!existing) {
+    throw new AppError(BizCode.COMMON_NOT_FOUND, 'Agent companion is not found', 404)
+  }
+
+  const nowMs = Date.now()
+  let plan = await findAgentCarePlan({
+    db,
+    userId: claims.sub,
+    agentId,
+  })
+
+  if (!plan) {
+    const planId = await upsertAgentCarePlan({
+      db,
+      id: uuidv7(),
+      userId: claims.sub,
+      agentId,
+      enabled: false,
+      frequency: 'daily',
+      preferredTime: '21:30',
+      scenes: ['long_absence', 'night'],
+      tone: 'gentle',
+      customPrompt: null,
+      nextRunAtMs: null,
+      nowMs,
+    })
+    plan = await findAgentCarePlan({
+      db,
+      userId: claims.sub,
+      agentId,
+    })
+
+    if (!plan || plan.id !== planId) {
+      throw new AppError(BizCode.SYSTEM_INTERNAL_ERROR, 'Failed to create agent care plan', 500)
+    }
+  }
+
+  const res = AgentCarePlanResponseSchema.parse({ plan })
+
+  return c.json(buildSuccess(res, createApiMeta()))
+})
+
+myAgentRoute.patch(
+  '/:agentId/care-plan',
+  zValidator(
+    'json',
+    UpsertAgentCarePlanRequestSchema,
+    buildValidationErrorHandler('Invalid agent care plan payload'),
+  ),
+  async (c) => {
+    const claims = await requireWebAccessToken(c)
+    const payload = c.req.valid('json')
+    const agentId = c.req.param('agentId')?.trim()
+
+    if (!agentId) {
+      throw new AppError(BizCode.COMMON_INVALID_REQUEST, 'Agent id is required', 400)
+    }
+
+    const db = getDb(c.env.DB)
+    const existing = await findUserAgentCompanionDetail(db, {
+      userId: claims.sub,
+      agentId,
+    })
+
+    if (!existing) {
+      throw new AppError(BizCode.COMMON_NOT_FOUND, 'Agent companion is not found', 404)
+    }
+
+    const nowMs = Date.now()
+    const preferredTime = payload.preferredTime?.trim() || null
+    const nextRunAtMs = calculateNextCareRunAtMs({
+      enabled: payload.enabled,
+      frequency: payload.frequency,
+      preferredTime,
+      nowMs,
+    })
+
+    await upsertAgentCarePlan({
+      db,
+      id: uuidv7(),
+      userId: claims.sub,
+      agentId,
+      enabled: payload.enabled,
+      frequency: payload.frequency,
+      preferredTime,
+      scenes: payload.scenes,
+      tone: payload.tone,
+      customPrompt: payload.customPrompt?.trim() || null,
+      nextRunAtMs,
+      nowMs,
+    })
+
+    const plan = await findAgentCarePlan({
+      db,
+      userId: claims.sub,
+      agentId,
+    })
+
+    if (!plan) {
+      throw new AppError(BizCode.SYSTEM_INTERNAL_ERROR, 'Failed to save agent care plan', 500)
+    }
+
+    const res = AgentCarePlanResponseSchema.parse({ plan })
+
+    return c.json(buildSuccess(res, createApiMeta()))
+  },
+)
+
+myAgentRoute.get('/:agentId/care-events', async (c) => {
+  const claims = await requireWebAccessToken(c)
+  const agentId = c.req.param('agentId')?.trim()
+
+  if (!agentId) {
+    throw new AppError(BizCode.COMMON_INVALID_REQUEST, 'Agent id is required', 400)
+  }
+
+  const db = getDb(c.env.DB)
+  const existing = await findUserAgentCompanionDetail(db, {
+    userId: claims.sub,
+    agentId,
+  })
+
+  if (!existing) {
+    throw new AppError(BizCode.COMMON_NOT_FOUND, 'Agent companion is not found', 404)
+  }
+
+  const events = await listAgentCareEvents({
+    db,
+    userId: claims.sub,
+    agentId,
+    limit: 20,
+  })
+  const res = AgentCareEventsResponseSchema.parse({ items: events.map(toCareEventResponse) })
+
+  return c.json(buildSuccess(res, createApiMeta()))
+})
+
+myAgentRoute.post(
+  '/:agentId/care-events/generate',
+  zValidator(
+    'json',
+    GenerateAgentCareEventRequestSchema,
+    buildValidationErrorHandler('Invalid agent care event generate payload'),
+  ),
+  async (c) => {
+    const claims = await requireWebAccessToken(c)
+    const payload = c.req.valid('json')
+    const agentId = c.req.param('agentId')?.trim()
+
+    if (!agentId) {
+      throw new AppError(BizCode.COMMON_INVALID_REQUEST, 'Agent id is required', 400)
+    }
+
+    const db = getDb(c.env.DB)
+    const agent = await findUserAgentCompanionDetail(db, {
+      userId: claims.sub,
+      agentId,
+    })
+
+    if (!agent) {
+      throw new AppError(BizCode.COMMON_NOT_FOUND, 'Agent companion is not found', 404)
+    }
+
+    let plan = await findAgentCarePlan({
+      db,
+      userId: claims.sub,
+      agentId,
+    })
+
+    if (!plan) {
+      const nowMs = Date.now()
+
+      await upsertAgentCarePlan({
+        db,
+        id: uuidv7(),
+        userId: claims.sub,
+        agentId,
+        enabled: true,
+        frequency: 'daily',
+        preferredTime: '21:30',
+        scenes: ['long_absence', 'night'],
+        tone: 'gentle',
+        customPrompt: null,
+        nextRunAtMs: calculateNextCareRunAtMs({
+          enabled: true,
+          frequency: 'daily',
+          preferredTime: '21:30',
+          nowMs,
+        }),
+        nowMs,
+      })
+      plan = await findAgentCarePlan({
+        db,
+        userId: claims.sub,
+        agentId,
+      })
+    }
+
+    if (!plan) {
+      throw new AppError(BizCode.SYSTEM_INTERNAL_ERROR, 'Failed to prepare agent care plan', 500)
+    }
+
+    const scene = payload.scene ?? plan.scenes[0] ?? 'long_absence'
+    const nowMs = Date.now()
+    const conversation = await getOrCreateDefaultAgentConversation({
+      db,
+      id: uuidv7(),
+      userId: claims.sub,
+      agentId,
+      title: agent.name,
+      nowMs,
+    })
+    const message = buildProactiveCareMessage({
+      agentName: agent.name,
+      scene,
+      tone: plan.tone,
+      customPrompt: plan.customPrompt,
+    })
+    const messageId = uuidv7()
+    const eventId = uuidv7()
+
+    await insertAgentConversationMessage({
+      db,
+      id: messageId,
+      conversationId: conversation.id,
+      userId: claims.sub,
+      agentId,
+      role: 'assistant',
+      content: message,
+      status: 'completed',
+      metadataJson: JSON.stringify({
+        source: 'proactive_care',
+        scene,
+        sceneLabel: getCareSceneLabel(scene),
+        tone: plan.tone,
+      }),
+      nowMs,
+    })
+    await insertAgentCareEvent({
+      db,
+      id: eventId,
+      userId: claims.sub,
+      agentId,
+      carePlanId: plan.id,
+      conversationId: conversation.id,
+      messageId,
+      scene,
+      message,
+      metadataJson: JSON.stringify({
+        frequency: plan.frequency,
+        preferredTime: plan.preferredTime,
+      }),
+      nowMs,
+    })
+    await updateUserAgentCompanionLatestAssistantMessage({
+      db,
+      userId: claims.sub,
+      agentId,
+      message,
+      nowMs,
+    })
+    await updateAgentConversationAfterMessage({
+      db,
+      userId: claims.sub,
+      agentId,
+      conversationId: conversation.id,
+      summary: conversation.summary,
+      messageCount: conversation.messageCount + 1,
+      lastMessageAtMs: nowMs,
+      nowMs,
+    })
+
+    const event = await findAgentCareEvent({
+      db,
+      userId: claims.sub,
+      agentId,
+      eventId,
+    })
+
+    if (!event) {
+      throw new AppError(BizCode.SYSTEM_INTERNAL_ERROR, 'Failed to create agent care event', 500)
+    }
+
+    const res = GenerateAgentCareEventResponseSchema.parse({
+      event: toCareEventResponse(event),
+    })
+
+    return c.json(buildSuccess(res, createApiMeta()))
+  },
+)
 
 myAgentRoute.get('/:agentId', async (c) => {
   const claims = await requireWebAccessToken(c)

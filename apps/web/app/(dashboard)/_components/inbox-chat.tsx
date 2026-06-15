@@ -1,10 +1,15 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useChat, type UIMessage } from "@ai-sdk/react"
 import { TextStreamChatTransport } from "ai"
-import type { AgentConversationResponse, InboxChatRequest } from "@repo/contracts"
+import type {
+  AgentConversationResponse,
+  AgentMessageFeedback,
+  AgentMessageFeedbackRating,
+  InboxChatRequest,
+} from "@repo/contracts"
 import {
   Clock3,
   Heart,
@@ -13,6 +18,8 @@ import {
   RadioTower,
   ShieldCheck,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
   UserRound,
 } from "lucide-react"
 import {
@@ -35,7 +42,7 @@ import {
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input"
 import { readClientSession } from "@/auth/client-session"
-import { getAgentConversation, getAgentConversationMessages } from "@/auth/api"
+import { getAgentConversation, getAgentConversationMessages, submitAgentMessageFeedback } from "@/auth/api"
 import {
   localLlmConfigChangedEventName,
   readLocalLlmConfigStore,
@@ -113,6 +120,20 @@ function buildInitialMessages(serverConversation: AgentConversationResponse): UI
       ],
     },
   ]
+}
+
+function buildMessageFeedbackById(messages: AgentConversationResponse["messages"]) {
+  return messages.reduce<Record<string, AgentMessageFeedback | null>>((map, message) => {
+    if (message.role === "assistant") {
+      map[message.id] = message.feedback
+    }
+
+    return map
+  }, {})
+}
+
+function buildPersistedAssistantMessageIds(messages: AgentConversationResponse["messages"]) {
+  return new Set(messages.filter((message) => message.role === "assistant").map((message) => message.id))
 }
 
 function getMessageText(message: UIMessage) {
@@ -220,7 +241,11 @@ function InboxChatLoadingPanel({ conversation }: { conversation: ChatConversatio
   )
 }
 
-function InboxChatErrorPanel({ conversation }: { conversation: ChatConversation }) {
+function InboxChatErrorPanel({ conversation, error }: { conversation: ChatConversation; error: unknown }) {
+  const message = error instanceof Error && error.message
+    ? error.message
+    : "请确认 API 已启动并完成最新 D1 迁移后刷新页面。"
+
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-slate-50/70">
       <div className="flex flex-1 items-center justify-center px-5 py-8">
@@ -233,7 +258,7 @@ function InboxChatErrorPanel({ conversation }: { conversation: ChatConversation 
           />
           <h2 className="mt-4 text-base font-semibold text-slate-950">聊天历史加载失败</h2>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            请确认 API 已完成最新 D1 迁移后刷新页面。
+            {message}
           </p>
         </div>
       </div>
@@ -242,10 +267,17 @@ function InboxChatErrorPanel({ conversation }: { conversation: ChatConversation 
 }
 
 function InboxChatInner({ conversation, serverConversation, onConversationUpdated }: InboxChatInnerProps) {
+  const queryClient = useQueryClient()
   const [draftMessage, setDraftMessage] = useState("")
   const [historyMessages, setHistoryMessages] = useState<UIMessage[]>(() => buildInitialMessages(serverConversation))
   const [nextCursor, setNextCursor] = useState(serverConversation.nextCursor)
   const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false)
+  const [feedbackByMessageId, setFeedbackByMessageId] = useState<Record<string, AgentMessageFeedback | null>>(() =>
+    buildMessageFeedbackById(serverConversation.messages),
+  )
+  const [persistedAssistantMessageIds, setPersistedAssistantMessageIds] = useState<Set<string>>(() =>
+    buildPersistedAssistantMessageIds(serverConversation.messages),
+  )
   const [llmStore, setLlmStore] = useState<LocalLlmConfigStore>({ selectedConfigId: null, items: [] })
   const enabledLlmConfigs = llmStore.items.filter((item) => item.enabled)
   const selectedLlmConfig =
@@ -291,6 +323,25 @@ function InboxChatInner({ conversation, serverConversation, onConversationUpdate
     transport,
     messages: historyMessages,
   })
+  const feedbackMutation = useMutation({
+    mutationFn: (input: { messageId: string; rating: AgentMessageFeedbackRating }) => {
+      if (!conversation.id) {
+        throw new Error("Agent id is required")
+      }
+
+      return submitAgentMessageFeedback(conversation.id, input.messageId, {
+        rating: input.rating,
+        reason: input.rating === "positive" ? "helpful" : "other",
+      })
+    },
+    onSuccess(response) {
+      setFeedbackByMessageId((current) => ({
+        ...current,
+        [response.messageId]: response.feedback,
+      }))
+      void queryClient.invalidateQueries({ queryKey: ["agent-conversation", conversation.id] })
+    },
+  })
   const isSending = status === "submitted" || status === "streaming"
   const [visibleAssistantTextById, setVisibleAssistantTextById] = useState<Record<string, string>>(() =>
     buildVisibleAssistantTextById(historyMessages),
@@ -319,6 +370,15 @@ function InboxChatInner({ conversation, serverConversation, onConversationUpdate
   const latestMessage = messages[messages.length - 1]
   const latestAssistantText =
     latestMessage?.role === "assistant" ? getMessageText(latestMessage).trim() : ""
+  const serverMessageSignature = serverConversation.messages
+    .map((message) => [
+      message.id,
+      message.role,
+      message.createdAtMs,
+      message.feedback?.rating ?? "none",
+      message.feedback?.updatedAtMs ?? 0,
+    ].join(":"))
+    .join("\n")
   const shouldShowTypingBubble =
     status === "submitted" ||
     (status === "streaming" && latestMessage?.role !== "assistant") ||
@@ -330,6 +390,21 @@ function InboxChatInner({ conversation, serverConversation, onConversationUpdate
   })
   const [hasPendingConversationUpdate, setHasPendingConversationUpdate] = useState(false)
 
+  useEffect(() => {
+    if (isSending) {
+      return
+    }
+
+    const nextMessages = buildInitialMessages(serverConversation)
+
+    setHistoryMessages(nextMessages)
+    setMessages(nextMessages)
+    setNextCursor(serverConversation.nextCursor)
+    setFeedbackByMessageId(buildMessageFeedbackById(serverConversation.messages))
+    setPersistedAssistantMessageIds(buildPersistedAssistantMessageIds(serverConversation.messages))
+    setVisibleAssistantTextById(buildVisibleAssistantTextById(nextMessages))
+  }, [isSending, serverConversation, serverMessageSignature, setMessages])
+
   async function loadMoreHistory() {
     if (!nextCursor || isLoadingMoreHistory || !conversation.id) {
       return
@@ -340,7 +415,22 @@ function InboxChatInner({ conversation, serverConversation, onConversationUpdate
     try {
       const response = await getAgentConversationMessages(conversation.id, nextCursor)
       const olderMessages = response.messages.map(toUiMessage)
+      const olderFeedbackById = buildMessageFeedbackById(response.messages)
+      const olderAssistantMessageIds = buildPersistedAssistantMessageIds(response.messages)
 
+      setFeedbackByMessageId((current) => ({
+        ...olderFeedbackById,
+        ...current,
+      }))
+      setPersistedAssistantMessageIds((current) => {
+        const next = new Set(current)
+
+        for (const messageId of olderAssistantMessageIds) {
+          next.add(messageId)
+        }
+
+        return next
+      })
       setVisibleAssistantTextById((current) => {
         const next = { ...current }
         let changed = false
@@ -561,6 +651,11 @@ function InboxChatInner({ conversation, serverConversation, onConversationUpdate
           {messages.map((message) => {
             const isUser = message.role === "user"
             const messageText = getMessageText(message)
+            const messageFeedback = feedbackByMessageId[message.id] ?? null
+            const canSubmitFeedback =
+              !isUser &&
+              message.id !== INITIAL_ASSISTANT_MESSAGE_ID &&
+              persistedAssistantMessageIds.has(message.id)
             const visibleMessageText =
               !isUser && message.id !== INITIAL_ASSISTANT_MESSAGE_ID
                 ? visibleAssistantTextById[message.id] ?? sliceText(messageText, TYPEWRITER_CHARS_PER_STEP)
@@ -620,6 +715,48 @@ function InboxChatInner({ conversation, serverConversation, onConversationUpdate
                       {visibleMessageText}
                     </MessageResponse>
                   </div>
+
+                  {canSubmitFeedback ? (
+                    <div className="flex items-center gap-1.5 pl-1 text-xs text-slate-400">
+                      <button
+                        aria-label="这条回复有帮助"
+                        className={cn(
+                          "inline-flex size-7 items-center justify-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                          messageFeedback?.rating === "positive"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : "border-slate-200 bg-white/70 text-slate-400 hover:border-emerald-200 hover:text-emerald-700",
+                        )}
+                        disabled={feedbackMutation.isPending}
+                        onClick={() => {
+                          feedbackMutation.mutate({ messageId: message.id, rating: "positive" })
+                        }}
+                        type="button"
+                      >
+                        <ThumbsUp className="size-3.5" />
+                      </button>
+                      <button
+                        aria-label="这条回复不合适"
+                        className={cn(
+                          "inline-flex size-7 items-center justify-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                          messageFeedback?.rating === "negative"
+                            ? "border-rose-200 bg-rose-50 text-rose-700"
+                            : "border-slate-200 bg-white/70 text-slate-400 hover:border-rose-200 hover:text-rose-700",
+                        )}
+                        disabled={feedbackMutation.isPending}
+                        onClick={() => {
+                          feedbackMutation.mutate({ messageId: message.id, rating: "negative" })
+                        }}
+                        type="button"
+                      >
+                        <ThumbsDown className="size-3.5" />
+                      </button>
+                      {messageFeedback ? (
+                        <span className="text-[11px] font-medium text-slate-400">
+                          已记录偏好
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
 
                 {isUser ? (
@@ -743,7 +880,7 @@ export function InboxChat({ conversation, onConversationUpdated }: InboxChatProp
   }
 
   if (conversationQuery.isError || !conversationQuery.data) {
-    return <InboxChatErrorPanel conversation={conversation} />
+    return <InboxChatErrorPanel conversation={conversation} error={conversationQuery.error} />
   }
 
   return (
