@@ -5,6 +5,7 @@ import type {
   AgentConversationResponse,
   AddAgentGroupChatMembersRequest,
   AddAgentGroupChatMembersResponse,
+  AvatarUploadResponse,
   CreateMyAgentCompanionRequest,
   CreateMyAgentCompanionResponse,
   CreateAgentGroupChatRequest,
@@ -66,6 +67,13 @@ export function getWebUserProfile(accessToken?: string) {
       authorization: `Bearer ${accessToken}`,
     },
   } : undefined)
+}
+
+export function uploadWebUserAvatar(file: File) {
+  const formData = new FormData()
+  formData.set('file', file)
+
+  return http.post<AvatarUploadResponse, FormData>('/rpc/user/profile/avatar', formData)
 }
 
 export function getMyAgentSummary() {

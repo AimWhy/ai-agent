@@ -169,7 +169,7 @@ userRoute.get('/avatar', async (c) => {
 })
 
 userRoute.post('/profile/avatar', async (c) => {
-  const claims = await requireAdminAccessToken(c)
+  const claims = await requireProfileAccessToken(c)
 
   const formData = await c.req.formData()
   const avatarFile = formData.get('file')

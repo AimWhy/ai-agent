@@ -8,12 +8,13 @@ import { http } from "@/lib/http"
 
 type UserAvatarProps = {
   user: Pick<UserProfileResponse, "name" | "email" | "avatarKey">
-  size?: "md" | "lg"
+  size?: "sm" | "md" | "lg"
 }
 
 const sizeClassNameMap: Record<NonNullable<UserAvatarProps["size"]>, string> = {
-  md: "size-10 text-sm",
-  lg: "size-16 text-lg",
+  sm: "size-8 rounded-lg text-xs",
+  md: "size-10 rounded-2xl text-sm",
+  lg: "size-16 rounded-2xl text-lg",
 }
 
 function getFallbackText(user: UserAvatarProps["user"]) {
@@ -61,7 +62,7 @@ export function UserAvatar({ user, size = "md" }: UserAvatarProps) {
     }
   }, [avatarUrl])
 
-  const className = `${sizeClassNameMap[size]} shrink-0 rounded-2xl border border-slate-200 object-cover`
+  const className = `${sizeClassNameMap[size]} shrink-0 border border-slate-200 object-cover`
 
   if (avatarSrc) {
     return <img alt={`${user.name || user.email} avatar`} className={className} src={avatarSrc} />

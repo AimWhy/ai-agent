@@ -50,6 +50,8 @@ import {
   type LocalLlmConfigStore,
 } from "@/auth/local-llm-config"
 import { AgentAvatar } from "@/components/agent-avatar"
+import { UserAvatar } from "@/components/user-avatar"
+import { useWebDashboardContext } from "@/components/web-dashboard-guard"
 import { getWebClientEnv } from "@/env.client"
 import { cn } from "@/lib/utils"
 
@@ -267,6 +269,7 @@ function InboxChatErrorPanel({ conversation, error }: { conversation: ChatConver
 }
 
 function InboxChatInner({ conversation, serverConversation, onConversationUpdated }: InboxChatInnerProps) {
+  const { profile } = useWebDashboardContext()
   const queryClient = useQueryClient()
   const [draftMessage, setDraftMessage] = useState("")
   const [historyMessages, setHistoryMessages] = useState<UIMessage[]>(() => buildInitialMessages(serverConversation))
@@ -760,8 +763,8 @@ function InboxChatInner({ conversation, serverConversation, onConversationUpdate
                 </div>
 
                 {isUser ? (
-                  <span className="mt-6 flex size-9 shrink-0 items-center justify-center rounded-full border border-slate-900 bg-slate-950 text-white">
-                    <UserRound className="size-4" />
+                  <span className="mt-6 shrink-0">
+                    <UserAvatar user={profile} size="sm" />
                   </span>
                 ) : null}
               </div>

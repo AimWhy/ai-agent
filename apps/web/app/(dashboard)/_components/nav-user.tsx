@@ -11,11 +11,6 @@ import {
 } from "lucide-react"
 
 import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@repo/ui/avatar"
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -30,6 +25,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@repo/ui/sidebar"
+import { UserAvatar } from "@/components/user-avatar"
 
 export function NavUser({
   user,
@@ -37,11 +33,15 @@ export function NavUser({
   user: {
     name: string
     email: string
-    avatar?: string | null
+    avatarKey: string | null
   }
 }) {
   const { isMobile } = useSidebar()
-  const fallbackText = (user.name.trim() || user.email.trim()).slice(0, 2).toUpperCase() || "ME"
+  const avatarUser = {
+    name: user.name,
+    email: user.email,
+    avatarKey: user.avatarKey,
+  }
 
   return (
     <SidebarMenu>
@@ -52,10 +52,7 @@ export function NavUser({
               size="lg"
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground md:h-8 md:p-0"
             >
-              <Avatar className="h-8 w-8 rounded-lg">
-                {user.avatar ? <AvatarImage src={user.avatar} alt={user.name} /> : null}
-                <AvatarFallback className="rounded-lg">{fallbackText}</AvatarFallback>
-              </Avatar>
+              <UserAvatar user={avatarUser} size="sm" />
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">{user.name}</span>
                 <span className="truncate text-xs">{user.email}</span>
@@ -71,10 +68,7 @@ export function NavUser({
           >
             <DropdownMenuLabel className="p-0 font-normal">
               <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-                <Avatar className="h-8 w-8 rounded-lg">
-                  {user.avatar ? <AvatarImage src={user.avatar} alt={user.name} /> : null}
-                  <AvatarFallback className="rounded-lg">{fallbackText}</AvatarFallback>
-                </Avatar>
+                <UserAvatar user={avatarUser} size="sm" />
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium">{user.name}</span>
                   <span className="truncate text-xs">{user.email}</span>
