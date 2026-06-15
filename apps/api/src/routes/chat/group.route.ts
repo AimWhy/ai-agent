@@ -1,6 +1,10 @@
 import { uuidv7 } from 'uuidv7'
 import { Hono, type Context } from 'hono'
 import { zValidator } from '@hono/zod-validator'
+import { ChatPromptTemplate } from '@langchain/core/prompts'
+import { Annotation, END, START, StateGraph } from '@langchain/langgraph'
+import { ChatOpenAI } from '@langchain/openai'
+import { z } from 'zod'
 import {
   AddAgentGroupChatMembersRequestSchema,
   AddAgentGroupChatMembersResponseSchema,
@@ -60,6 +64,59 @@ const groupPromptHistoryLimit = 28
 const groupReplyAgentLimit = 3
 const htmlUpstreamMessage = '上游返回的是网页内容，而不是模型响应。请检查 Base URL 与 Wire API 是否匹配。'
 const emptyUpstreamMessage = '上游模型返回成功，但没有提供可展示的文本内容。请检查 LLM 协议、模型名与中转接口是否匹配。'
+
+type AgentMemoryForPrompt = {
+  type: string
+  content: string
+  importance: number
+}
+
+type PlannedAgentReply = {
+  agent: AgentGroupChatAgentRecord
+  content: string
+}
+
+const GroupChatIntentSchema = z.object({
+  intent: z.enum([
+    'direct_mention',
+    'group_opinion',
+    'emotional_support',
+    'planning',
+    'roleplay',
+    'casual_chat',
+    'conflict_repair',
+    'memory_or_preference',
+    'unknown',
+  ]),
+  targetAgentNames: z.array(z.string().trim().min(1).max(120)).max(6),
+  shouldUseMultipleAgents: z.boolean(),
+  replyMode: z.enum(['single', 'multi_serial', 'multi_parallel']),
+  confidence: z.number().min(0).max(1),
+  reason: z.string().trim().max(500),
+})
+
+type GroupChatIntent = z.infer<typeof GroupChatIntentSchema>
+
+const GroupChatAgentSelectionSchema = z.object({
+  selectedAgentIds: z.array(z.string().trim().min(1)).min(1).max(groupReplyAgentLimit),
+  mode: z.enum(['single', 'multi_serial', 'multi_parallel']),
+  reason: z.string().trim().max(500),
+})
+
+type GroupChatAgentSelection = z.infer<typeof GroupChatAgentSelectionSchema>
+
+const GroupChatReplyQualitySchema = z.object({
+  approved: z.boolean(),
+  score: z.number().min(0).max(1),
+  issues: z.array(z.string().trim().max(160)).max(6),
+  revisions: z.array(z.object({
+    agentId: z.string().trim().min(1),
+    content: z.string().trim().max(4000),
+  })).max(groupReplyAgentLimit),
+  reason: z.string().trim().max(500),
+})
+
+type GroupChatReplyQuality = z.infer<typeof GroupChatReplyQualitySchema>
 
 async function requireWebAccessToken(c: Context<{ Bindings: ApiBindings }>) {
   const authorization = c.req.header('authorization')
@@ -167,6 +224,28 @@ function resolveChatProviderConfig(params: {
     wireApi: 'chat_completions',
   }
 }
+
+function buildLangChainChatModel(providerConfig: ChatProviderConfig) {
+  return new ChatOpenAI({
+    model: providerConfig.model,
+    apiKey: providerConfig.apiKey,
+    temperature: 0,
+    useResponsesApi: providerConfig.wireApi === 'responses',
+    configuration: {
+      baseURL: providerConfig.baseURL.replace(/\/$/, ''),
+    },
+    ...(providerConfig.reasoningEffort ? { reasoning: { effort: providerConfig.reasoningEffort } } : {}),
+    ...(providerConfig.wireApi === 'responses' ? { zdrEnabled: true } : {}),
+  })
+}
+
+function getStructuredOutputMethods(providerConfig: ChatProviderConfig) {
+  return providerConfig.wireApi === 'responses'
+    ? ['jsonSchema', 'functionCalling', 'jsonMode'] as const
+    : ['functionCalling', 'jsonSchema', 'jsonMode'] as const
+}
+
+type LangChainStructuredOutputMethod = ReturnType<typeof getStructuredOutputMethods>[number]
 
 function joinProviderUrl(baseURL: string, path: string) {
   return `${baseURL.replace(/\/$/, '')}/${path.replace(/^\//, '')}`
@@ -357,6 +436,204 @@ function selectAgentsForReply(params: {
   return params.agents.slice(0, 1)
 }
 
+function formatAgentRoster(agents: AgentGroupChatAgentRecord[]) {
+  return agents
+    .map((agent, index) => [
+      `${index + 1}. id=${agent.id}`,
+      `名称：${agent.name}`,
+      agent.headline ? `简介：${agent.headline}` : '',
+      agent.description ? `说明：${agent.description}` : '',
+      agent.personalityPrompt ? `性格：${agent.personalityPrompt}` : '',
+      agent.tonePrompt ? `语气：${agent.tonePrompt}` : '',
+    ].filter(Boolean).join('\n'))
+    .join('\n\n')
+}
+
+function normalizeGroupChatIntent(intent: GroupChatIntent, userText: string): GroupChatIntent {
+  const text = userText.trim()
+  const shouldUseMultipleAgents =
+    intent.shouldUseMultipleAgents ||
+    intent.targetAgentNames.length > 1 ||
+    /(你们|大家|一起|分别|都说|怎么看|意见)/.test(text)
+  const replyMode = shouldUseMultipleAgents
+    ? intent.replyMode === 'multi_parallel' ? 'multi_parallel' : 'multi_serial'
+    : 'single'
+
+  return GroupChatIntentSchema.parse({
+    ...intent,
+    targetAgentNames: dedupeStrings(intent.targetAgentNames).slice(0, 6),
+    shouldUseMultipleAgents,
+    replyMode,
+    confidence: Math.min(1, Math.max(0, intent.confidence)),
+    reason: intent.reason.trim() || '根据用户本轮消息进行群聊意图判断。',
+  })
+}
+
+function buildFallbackGroupChatIntent(params: {
+  agents: AgentGroupChatAgentRecord[]
+  userText: string
+  reason: string
+}): GroupChatIntent {
+  const normalized = params.userText.toLowerCase()
+  const mentionedAgents = params.agents.filter((agent) => normalized.includes(agent.name.toLowerCase()))
+  const shouldUseMultipleAgents =
+    mentionedAgents.length > 1 ||
+    /(你们|大家|一起|分别|都说|怎么看|意见)/.test(params.userText)
+
+  return GroupChatIntentSchema.parse({
+    intent: mentionedAgents.length > 0
+      ? 'direct_mention'
+      : shouldUseMultipleAgents
+        ? 'group_opinion'
+        : 'casual_chat',
+    targetAgentNames: mentionedAgents.map((agent) => agent.name).slice(0, groupReplyAgentLimit),
+    shouldUseMultipleAgents,
+    replyMode: shouldUseMultipleAgents ? 'multi_serial' : 'single',
+    confidence: mentionedAgents.length > 0 || shouldUseMultipleAgents ? 0.82 : 0.65,
+    reason: params.reason,
+  })
+}
+
+function normalizeAgentSelection(params: {
+  selection: GroupChatAgentSelection
+  agents: AgentGroupChatAgentRecord[]
+  intent: GroupChatIntent
+  userText: string
+}): GroupChatAgentSelection {
+  const agentById = new Map(params.agents.map((agent) => [agent.id, agent]))
+  const selectedAgentIds = dedupeStrings(params.selection.selectedAgentIds)
+    .filter((agentId) => agentById.has(agentId))
+    .slice(0, groupReplyAgentLimit)
+
+  if (selectedAgentIds.length > 0) {
+    return GroupChatAgentSelectionSchema.parse({
+      selectedAgentIds,
+      mode: params.intent.shouldUseMultipleAgents || selectedAgentIds.length > 1
+        ? params.selection.mode === 'multi_parallel' ? 'multi_parallel' : 'multi_serial'
+        : 'single',
+      reason: params.selection.reason.trim() || params.intent.reason,
+    })
+  }
+
+  const fallbackAgents = selectAgentsForReply({
+    agents: params.agents,
+    userText: params.userText,
+  })
+
+  return GroupChatAgentSelectionSchema.parse({
+    selectedAgentIds: fallbackAgents.map((agent) => agent.id),
+    mode: fallbackAgents.length > 1 ? 'multi_serial' : 'single',
+    reason: '结构化 Agent 选择结果不可用，已回退到 v1 规则。',
+  })
+}
+
+function normalizeReplyQuality(params: {
+  quality: GroupChatReplyQuality
+  replies: PlannedAgentReply[]
+}): GroupChatReplyQuality {
+  const replyAgentIds = new Set(params.replies.map((reply) => reply.agent.id))
+  const revisions = params.quality.revisions
+    .filter((revision) => replyAgentIds.has(revision.agentId))
+    .map((revision) => ({
+      agentId: revision.agentId,
+      content: normalizeText(revision.content, 4000),
+    }))
+    .filter((revision) => revision.content)
+
+  return GroupChatReplyQualitySchema.parse({
+    ...params.quality,
+    score: Math.min(1, Math.max(0, params.quality.score)),
+    issues: params.quality.issues.map((issue) => issue.trim()).filter(Boolean).slice(0, 6),
+    revisions,
+    reason: params.quality.reason.trim() || '回复质量检查完成。',
+  })
+}
+
+const groupChatIntentPrompt = ChatPromptTemplate.fromMessages([
+  [
+    'system',
+    [
+      '你是 AI 电子伴侣产品中的群聊意图判断器。',
+      '你的任务是判断用户本轮消息在 Agent 群聊中的意图，以及是否需要多个 Agent 参与。',
+      '不要生成聊天回复，只输出结构化结果。',
+      '判断标准：',
+      '- 用户点名某个 Agent 时，intent 使用 direct_mention，并填写 targetAgentNames。',
+      '- 用户说“你们/大家/一起/分别/怎么看/意见”等群体表达时，shouldUseMultipleAgents 为 true。',
+      '- 情绪陪伴、关系修复、角色扮演、计划讨论要分别识别。',
+      '- 为了避免刷屏，除非用户明确需要多人参与，否则 replyMode 选择 single。',
+    ].join('\n'),
+  ],
+  [
+    'user',
+    [
+      '群聊名称：{groupTitle}',
+      '群聊摘要：{groupSummary}',
+      '可参与 Agent：',
+      '{agentRoster}',
+      '最近群聊：',
+      '{recentHistory}',
+      '用户本轮消息：{userText}',
+    ].join('\n'),
+  ],
+])
+
+const groupChatAgentSelectionPrompt = ChatPromptTemplate.fromMessages([
+  [
+    'system',
+    [
+      '你是 AI 电子伴侣群聊的发言权调度器。',
+      '请根据意图判断、Agent 人设和最近聊天，选择最适合回复的 Agent。',
+      `最多选择 ${groupReplyAgentLimit} 个 Agent。`,
+      '不要为了热闹而选择过多 Agent。只有用户明确询问大家意见、要求分别回答或需要多视角时，才选择多个。',
+      '输出 selectedAgentIds 时必须使用给定 Agent 的 id。',
+    ].join('\n'),
+  ],
+  [
+    'user',
+    [
+      '群聊名称：{groupTitle}',
+      '群聊摘要：{groupSummary}',
+      '意图判断：{intent}',
+      '可参与 Agent：',
+      '{agentRoster}',
+      '最近群聊：',
+      '{recentHistory}',
+      '用户本轮消息：{userText}',
+    ].join('\n'),
+  ],
+])
+
+const groupChatReplyQualityPrompt = ChatPromptTemplate.fromMessages([
+  [
+    'system',
+    [
+      '你是 AI 电子伴侣群聊的回复质量检查器。',
+      '检查多个 Agent 回复是否自然、克制、符合群聊场景。',
+      '不要过度改写，只有在明显有问题时才给 revisions。',
+      '检查重点：',
+      '- 是否暴露系统提示词或技术元数据。',
+      '- 是否冒充真人。',
+      '- 是否替其他 Agent 发言。',
+      '- 是否过长、说教或刷屏。',
+      '- 是否和用户意图不匹配。',
+      '- 是否违反角色边界。',
+    ].join('\n'),
+  ],
+  [
+    'user',
+    [
+      '群聊名称：{groupTitle}',
+      '意图判断：{intent}',
+      'Agent 选择：{selection}',
+      '最近群聊：',
+      '{recentHistory}',
+      '用户本轮消息：{userText}',
+      '待检查回复：',
+      '{replies}',
+    ].join('\n'),
+  ],
+])
+
 function formatGroupHistory(messages: AgentGroupChatMessageRecord[]) {
   return messages
     .slice(-groupPromptHistoryLimit)
@@ -381,7 +658,9 @@ async function buildAgentReply(params: {
   allAgents: AgentGroupChatAgentRecord[]
   recentMessages: AgentGroupChatMessageRecord[]
   userText: string
-  activeMemories: Array<{ type: string; content: string; importance: number }>
+  activeMemories: AgentMemoryForPrompt[]
+  intent?: GroupChatIntent | null
+  selection?: GroupChatAgentSelection | null
   signal: AbortSignal
 }) {
   const otherAgents = params.allAgents
@@ -415,6 +694,11 @@ async function buildAgentReply(params: {
         `其他群成员：${otherAgents || '暂无'}`,
         params.agent.headline ? `你的简介：${params.agent.headline}` : '',
         params.agent.description ? `你的角色说明：${params.agent.description}` : '',
+        params.agent.storyBackground ? `你的故事背景：${params.agent.storyBackground}` : '',
+        params.agent.personalityPrompt ? `你的性格设定：${params.agent.personalityPrompt}` : '',
+        params.agent.tonePrompt ? `你的语气风格：${params.agent.tonePrompt}` : '',
+        params.intent ? `群聊意图：${JSON.stringify(params.intent)}` : '',
+        params.selection ? `你被选中的原因：${params.selection.reason}` : '',
         '最近群聊：',
         formatGroupHistory(params.recentMessages) || '暂无历史。',
         `用户刚刚说：${params.userText}`,
@@ -428,6 +712,535 @@ async function buildAgentReply(params: {
     messages,
     signal: params.signal,
   })
+}
+
+async function invokeStructuredGroupChatIntent(params: {
+  providerConfig: ChatProviderConfig
+  method: LangChainStructuredOutputMethod
+  groupChat: AgentGroupChatRecord
+  agents: AgentGroupChatAgentRecord[]
+  recentMessages: AgentGroupChatMessageRecord[]
+  userText: string
+  signal: AbortSignal
+}) {
+  const model = buildLangChainChatModel(params.providerConfig)
+  const structuredModel = model.withStructuredOutput(GroupChatIntentSchema, {
+    name: 'agent_group_chat_intent',
+    method: params.method,
+  })
+  const chain = groupChatIntentPrompt.pipe(structuredModel)
+  const result = await chain.invoke({
+    groupTitle: params.groupChat.title,
+    groupSummary: params.groupChat.summary || '暂无',
+    agentRoster: formatAgentRoster(params.agents),
+    recentHistory: formatGroupHistory(params.recentMessages) || '暂无历史。',
+    userText: params.userText,
+  }, { signal: params.signal })
+
+  return normalizeGroupChatIntent(GroupChatIntentSchema.parse(result), params.userText)
+}
+
+async function classifyGroupChatIntentWithLangGraph(params: {
+  providerConfig: ChatProviderConfig
+  groupChat: AgentGroupChatRecord
+  agents: AgentGroupChatAgentRecord[]
+  recentMessages: AgentGroupChatMessageRecord[]
+  userText: string
+  signal: AbortSignal
+}) {
+  let lastError: unknown = null
+
+  for (const method of getStructuredOutputMethods(params.providerConfig)) {
+    try {
+      return await invokeStructuredGroupChatIntent({
+        ...params,
+        method,
+      })
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  console.warn('LangGraph group chat intent classification failed', lastError)
+  return buildFallbackGroupChatIntent({
+    agents: params.agents,
+    userText: params.userText,
+    reason: 'LangGraph 意图判断失败，已使用本地规则回退。',
+  })
+}
+
+async function invokeStructuredAgentSelection(params: {
+  providerConfig: ChatProviderConfig
+  method: LangChainStructuredOutputMethod
+  groupChat: AgentGroupChatRecord
+  agents: AgentGroupChatAgentRecord[]
+  recentMessages: AgentGroupChatMessageRecord[]
+  userText: string
+  intent: GroupChatIntent
+  signal: AbortSignal
+}) {
+  const model = buildLangChainChatModel(params.providerConfig)
+  const structuredModel = model.withStructuredOutput(GroupChatAgentSelectionSchema, {
+    name: 'agent_group_chat_agent_selection',
+    method: params.method,
+  })
+  const chain = groupChatAgentSelectionPrompt.pipe(structuredModel)
+  const result = await chain.invoke({
+    groupTitle: params.groupChat.title,
+    groupSummary: params.groupChat.summary || '暂无',
+    intent: JSON.stringify(params.intent),
+    agentRoster: formatAgentRoster(params.agents),
+    recentHistory: formatGroupHistory(params.recentMessages) || '暂无历史。',
+    userText: params.userText,
+  }, { signal: params.signal })
+
+  return normalizeAgentSelection({
+    selection: GroupChatAgentSelectionSchema.parse(result),
+    agents: params.agents,
+    intent: params.intent,
+    userText: params.userText,
+  })
+}
+
+async function selectGroupChatAgentsWithLangGraph(params: {
+  providerConfig: ChatProviderConfig
+  groupChat: AgentGroupChatRecord
+  agents: AgentGroupChatAgentRecord[]
+  recentMessages: AgentGroupChatMessageRecord[]
+  userText: string
+  intent: GroupChatIntent
+  signal: AbortSignal
+}) {
+  let lastError: unknown = null
+
+  for (const method of getStructuredOutputMethods(params.providerConfig)) {
+    try {
+      return await invokeStructuredAgentSelection({
+        ...params,
+        method,
+      })
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  console.warn('LangGraph group chat agent selection failed', lastError)
+  return normalizeAgentSelection({
+    selection: {
+      selectedAgentIds: selectAgentsForReply({
+        agents: params.agents,
+        userText: params.userText,
+      }).map((agent) => agent.id),
+      mode: params.intent.shouldUseMultipleAgents ? 'multi_serial' : 'single',
+      reason: 'LangGraph Agent 选择失败，已使用本地规则回退。',
+    },
+    agents: params.agents,
+    intent: params.intent,
+    userText: params.userText,
+  })
+}
+
+async function invokeStructuredReplyQuality(params: {
+  providerConfig: ChatProviderConfig
+  method: LangChainStructuredOutputMethod
+  groupChat: AgentGroupChatRecord
+  recentMessages: AgentGroupChatMessageRecord[]
+  userText: string
+  intent: GroupChatIntent
+  selection: GroupChatAgentSelection
+  replies: PlannedAgentReply[]
+  signal: AbortSignal
+}) {
+  const model = buildLangChainChatModel(params.providerConfig)
+  const structuredModel = model.withStructuredOutput(GroupChatReplyQualitySchema, {
+    name: 'agent_group_chat_reply_quality',
+    method: params.method,
+  })
+  const chain = groupChatReplyQualityPrompt.pipe(structuredModel)
+  const result = await chain.invoke({
+    groupTitle: params.groupChat.title,
+    intent: JSON.stringify(params.intent),
+    selection: JSON.stringify(params.selection),
+    recentHistory: formatGroupHistory(params.recentMessages) || '暂无历史。',
+    userText: params.userText,
+    replies: params.replies.map((reply) => `${reply.agent.name}(${reply.agent.id})：${reply.content}`).join('\n\n'),
+  }, { signal: params.signal })
+
+  return normalizeReplyQuality({
+    quality: GroupChatReplyQualitySchema.parse(result),
+    replies: params.replies,
+  })
+}
+
+async function checkGroupChatReplyQualityWithLangGraph(params: {
+  providerConfig: ChatProviderConfig
+  groupChat: AgentGroupChatRecord
+  recentMessages: AgentGroupChatMessageRecord[]
+  userText: string
+  intent: GroupChatIntent
+  selection: GroupChatAgentSelection
+  replies: PlannedAgentReply[]
+  signal: AbortSignal
+}) {
+  if (params.replies.length === 0) {
+    return GroupChatReplyQualitySchema.parse({
+      approved: false,
+      score: 0,
+      issues: ['没有可检查的 Agent 回复。'],
+      revisions: [],
+      reason: '没有生成回复。',
+    })
+  }
+
+  let lastError: unknown = null
+
+  for (const method of getStructuredOutputMethods(params.providerConfig)) {
+    try {
+      return await invokeStructuredReplyQuality({
+        ...params,
+        method,
+      })
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  console.warn('LangGraph group chat reply quality check failed', lastError)
+  return GroupChatReplyQualitySchema.parse({
+    approved: true,
+    score: 0.72,
+    issues: [],
+    revisions: [],
+    reason: '质量检查失败，保留原始回复。',
+  })
+}
+
+const GroupChatOrchestrationState = Annotation.Root({
+  providerConfig: Annotation<ChatProviderConfig>(),
+  groupChat: Annotation<AgentGroupChatRecord>(),
+  agents: Annotation<AgentGroupChatAgentRecord[]>(),
+  recentMessages: Annotation<AgentGroupChatMessageRecord[]>(),
+  userMessage: Annotation<AgentGroupChatMessageRecord>(),
+  userText: Annotation<string>(),
+  agentMemoriesByAgentId: Annotation<Record<string, AgentMemoryForPrompt[]>>(),
+  intent: Annotation<GroupChatIntent | null>(),
+  selection: Annotation<GroupChatAgentSelection | null>(),
+  selectedAgents: Annotation<AgentGroupChatAgentRecord[]>(),
+  replies: Annotation<PlannedAgentReply[]>(),
+  quality: Annotation<GroupChatReplyQuality | null>(),
+  signal: Annotation<AbortSignal>(),
+})
+
+async function classifyGroupIntentNode(state: typeof GroupChatOrchestrationState.State) {
+  return {
+    intent: await classifyGroupChatIntentWithLangGraph({
+      providerConfig: state.providerConfig,
+      groupChat: state.groupChat,
+      agents: state.agents,
+      recentMessages: state.recentMessages,
+      userText: state.userText,
+      signal: state.signal,
+    }),
+  }
+}
+
+async function selectGroupAgentsNode(state: typeof GroupChatOrchestrationState.State) {
+  const intent = state.intent ?? buildFallbackGroupChatIntent({
+    agents: state.agents,
+    userText: state.userText,
+    reason: '意图节点未返回结果，已使用本地规则回退。',
+  })
+  const selection = await selectGroupChatAgentsWithLangGraph({
+    providerConfig: state.providerConfig,
+    groupChat: state.groupChat,
+    agents: state.agents,
+    recentMessages: state.recentMessages,
+    userText: state.userText,
+    intent,
+    signal: state.signal,
+  })
+  const agentById = new Map(state.agents.map((agent) => [agent.id, agent]))
+  const selectedAgents = selection.selectedAgentIds
+    .map((agentId) => agentById.get(agentId))
+    .filter((agent): agent is AgentGroupChatAgentRecord => Boolean(agent))
+  const fallbackAgents = selectedAgents.length > 0
+    ? selectedAgents
+    : selectAgentsForReply({
+        agents: state.agents,
+        userText: state.userText,
+      })
+
+  return {
+    intent,
+    selection: selectedAgents.length > 0
+      ? selection
+      : normalizeAgentSelection({
+          selection: {
+            selectedAgentIds: fallbackAgents.map((agent) => agent.id),
+            mode: fallbackAgents.length > 1 ? 'multi_serial' : 'single',
+            reason: 'LangGraph 选择结果为空，已使用本地规则兜底。',
+          },
+          agents: state.agents,
+          intent,
+          userText: state.userText,
+        }),
+    selectedAgents: fallbackAgents,
+  }
+}
+
+async function generateGroupRepliesNode(state: typeof GroupChatOrchestrationState.State) {
+  const intent = state.intent ?? buildFallbackGroupChatIntent({
+    agents: state.agents,
+    userText: state.userText,
+    reason: '意图节点未返回结果，回复生成使用本地规则回退。',
+  })
+  const selection = state.selection ?? normalizeAgentSelection({
+    selection: {
+      selectedAgentIds: state.selectedAgents.map((agent) => agent.id),
+      mode: state.selectedAgents.length > 1 ? 'multi_serial' : 'single',
+      reason: '选择节点未返回结果，使用当前已选 Agent。',
+    },
+    agents: state.agents,
+    intent,
+    userText: state.userText,
+  })
+  const replies: PlannedAgentReply[] = []
+
+  if (selection.mode === 'multi_parallel') {
+    const parallelReplies = await Promise.all(state.selectedAgents.map(async (agent) => {
+      const assistantText = await buildAgentReply({
+        providerConfig: state.providerConfig,
+        groupChat: state.groupChat,
+        agent,
+        allAgents: state.agents,
+        recentMessages: [...state.recentMessages, state.userMessage],
+        userText: state.userText,
+        activeMemories: state.agentMemoriesByAgentId[agent.id] ?? [],
+        intent,
+        selection,
+        signal: state.signal,
+      })
+
+      return {
+        agent,
+        content: assistantText,
+      }
+    }))
+
+    replies.push(...parallelReplies)
+  } else {
+    for (const agent of state.selectedAgents) {
+      const assistantText = await buildAgentReply({
+        providerConfig: state.providerConfig,
+        groupChat: state.groupChat,
+        agent,
+        allAgents: state.agents,
+        recentMessages: [
+          ...state.recentMessages,
+          state.userMessage,
+          ...replies.map((reply, index) => ({
+            id: `planned-${reply.agent.id}-${index}`,
+            groupChatId: state.groupChat.id,
+            senderType: 'agent' as const,
+            agentId: reply.agent.id,
+            agentName: reply.agent.name,
+            agentImageKey: reply.agent.imageKey,
+            content: reply.content,
+            status: 'completed' as const,
+            turnIndex: state.userMessage.turnIndex,
+            createdAtMs: Date.now(),
+          })),
+        ],
+        userText: state.userText,
+        activeMemories: state.agentMemoriesByAgentId[agent.id] ?? [],
+        intent,
+        selection,
+        signal: state.signal,
+      })
+
+      replies.push({
+        agent,
+        content: assistantText,
+      })
+    }
+  }
+
+  return {
+    replies,
+  }
+}
+
+async function checkGroupReplyQualityNode(state: typeof GroupChatOrchestrationState.State) {
+  const intent = state.intent ?? buildFallbackGroupChatIntent({
+    agents: state.agents,
+    userText: state.userText,
+    reason: '意图节点未返回结果，质量检查使用本地规则回退。',
+  })
+  const selection = state.selection ?? normalizeAgentSelection({
+    selection: {
+      selectedAgentIds: state.replies.map((reply) => reply.agent.id),
+      mode: state.replies.length > 1 ? 'multi_serial' : 'single',
+      reason: '选择节点未返回结果，质量检查使用当前回复列表。',
+    },
+    agents: state.agents,
+    intent,
+    userText: state.userText,
+  })
+  const quality = await checkGroupChatReplyQualityWithLangGraph({
+    providerConfig: state.providerConfig,
+    groupChat: state.groupChat,
+    recentMessages: [...state.recentMessages, state.userMessage],
+    userText: state.userText,
+    intent,
+    selection,
+    replies: state.replies,
+    signal: state.signal,
+  })
+  const revisionsByAgentId = new Map(quality.revisions.map((revision) => [revision.agentId, revision.content]))
+
+  return {
+    intent,
+    selection,
+    quality,
+    replies: state.replies.map((reply) => ({
+      ...reply,
+      content: revisionsByAgentId.get(reply.agent.id)?.trim() || reply.content,
+    })),
+  }
+}
+
+const groupChatOrchestrationGraph = new StateGraph(GroupChatOrchestrationState)
+  .addNode('classifyIntent', classifyGroupIntentNode)
+  .addNode('selectAgents', selectGroupAgentsNode)
+  .addNode('generateReplies', generateGroupRepliesNode)
+  .addNode('checkQuality', checkGroupReplyQualityNode)
+  .addEdge(START, 'classifyIntent')
+  .addEdge('classifyIntent', 'selectAgents')
+  .addEdge('selectAgents', 'generateReplies')
+  .addEdge('generateReplies', 'checkQuality')
+  .addEdge('checkQuality', END)
+  .compile()
+
+async function orchestrateGroupChatReplies(params: {
+  providerConfig: ChatProviderConfig
+  groupChat: AgentGroupChatRecord
+  agents: AgentGroupChatAgentRecord[]
+  recentMessages: AgentGroupChatMessageRecord[]
+  userMessage: AgentGroupChatMessageRecord
+  userText: string
+  agentMemoriesByAgentId: Record<string, AgentMemoryForPrompt[]>
+  signal: AbortSignal
+}) {
+  try {
+    const result = await groupChatOrchestrationGraph.invoke({
+      providerConfig: params.providerConfig,
+      groupChat: params.groupChat,
+      agents: params.agents,
+      recentMessages: params.recentMessages,
+      userMessage: params.userMessage,
+      userText: params.userText,
+      agentMemoriesByAgentId: params.agentMemoriesByAgentId,
+      intent: null,
+      selection: null,
+      selectedAgents: [],
+      replies: [],
+      quality: null,
+      signal: params.signal,
+    })
+
+    const intent = result.intent ?? buildFallbackGroupChatIntent({
+      agents: params.agents,
+      userText: params.userText,
+      reason: 'LangGraph 未返回意图，使用本地规则结果。',
+    })
+    const selection = result.selection ?? normalizeAgentSelection({
+      selection: {
+        selectedAgentIds: result.replies.map((reply) => reply.agent.id),
+        mode: result.replies.length > 1 ? 'multi_serial' : 'single',
+        reason: 'LangGraph 未返回选择结果，使用回复结果反推。',
+      },
+      agents: params.agents,
+      intent,
+      userText: params.userText,
+    })
+
+    return {
+      intent,
+      selection,
+      replies: result.replies,
+      quality: result.quality,
+    }
+  } catch (error) {
+    console.warn('LangGraph group chat orchestration failed', error)
+    const intent = buildFallbackGroupChatIntent({
+      agents: params.agents,
+      userText: params.userText,
+      reason: 'LangGraph 编排失败，已回退到 v1 规则。',
+    })
+    const selectedAgents = selectAgentsForReply({
+      agents: params.agents,
+      userText: params.userText,
+    })
+    const selection = normalizeAgentSelection({
+      selection: {
+        selectedAgentIds: selectedAgents.map((agent) => agent.id),
+        mode: selectedAgents.length > 1 ? 'multi_serial' : 'single',
+        reason: 'LangGraph 编排失败，已回退到 v1 规则。',
+      },
+      agents: params.agents,
+      intent,
+      userText: params.userText,
+    })
+    const replies: PlannedAgentReply[] = []
+
+    for (const agent of selectedAgents) {
+      const assistantText = await buildAgentReply({
+        providerConfig: params.providerConfig,
+        groupChat: params.groupChat,
+        agent,
+        allAgents: params.agents,
+        recentMessages: [
+          ...params.recentMessages,
+          params.userMessage,
+          ...replies.map((reply, index) => ({
+            id: `fallback-${reply.agent.id}-${index}`,
+            groupChatId: params.groupChat.id,
+            senderType: 'agent' as const,
+            agentId: reply.agent.id,
+            agentName: reply.agent.name,
+            agentImageKey: reply.agent.imageKey,
+            content: reply.content,
+            status: 'completed' as const,
+            turnIndex: params.userMessage.turnIndex,
+            createdAtMs: Date.now(),
+          })),
+        ],
+        userText: params.userText,
+        activeMemories: params.agentMemoriesByAgentId[agent.id] ?? [],
+        intent,
+        selection,
+        signal: params.signal,
+      })
+
+      replies.push({
+        agent,
+        content: assistantText,
+      })
+    }
+
+    return {
+      intent,
+      selection,
+      replies,
+      quality: GroupChatReplyQualitySchema.parse({
+        approved: true,
+        score: 0.6,
+        issues: ['LangGraph 编排失败，使用 fallback 回复。'],
+        revisions: [],
+        reason: 'fallback',
+      }),
+    }
+  }
 }
 
 groupChatRoute.get('/', async (c) => {
@@ -709,38 +1522,42 @@ groupChatRoute.post(
       turnIndex,
       createdAtMs: userMessageNowMs,
     }
-    const selectedAgents = selectAgentsForReply({ agents, userText })
-    const agentMessages: AgentGroupChatMessageRecord[] = []
-    let nextMessageCount = groupChat.messageCount + 1
-    let lastMessageAtMs = userMessageNowMs
-
-    for (const agent of selectedAgents) {
+    const agentMemoriesEntries = await Promise.all(agents.map(async (agent) => {
       const activeMemories = await listActiveAgentMemories({
         db,
         userId: claims.sub,
         agentId: agent.id,
         limit: 6,
       })
-      const assistantText = await buildAgentReply({
-        providerConfig,
-        groupChat,
-        agent,
-        allAgents: agents,
-        recentMessages: [...recentMessages, userMessage, ...agentMessages],
-        userText,
-        activeMemories,
-        signal: c.req.raw.signal,
-      })
+
+      return [agent.id, activeMemories] as const
+    }))
+    const agentMemoriesByAgentId = Object.fromEntries(agentMemoriesEntries)
+    const orchestration = await orchestrateGroupChatReplies({
+      providerConfig,
+      groupChat,
+      agents,
+      recentMessages,
+      userMessage,
+      userText,
+      agentMemoriesByAgentId,
+      signal: c.req.raw.signal,
+    })
+    const agentMessages: AgentGroupChatMessageRecord[] = []
+    let nextMessageCount = groupChat.messageCount + 1
+    let lastMessageAtMs = userMessageNowMs
+
+    for (const reply of orchestration.replies) {
       const nowMs = Date.now()
       const messageId = uuidv7()
       const agentMessage: AgentGroupChatMessageRecord = {
         id: messageId,
         groupChatId: payload.groupChatId,
         senderType: 'agent',
-        agentId: agent.id,
-        agentName: agent.name,
-        agentImageKey: agent.imageKey,
-        content: assistantText,
+        agentId: reply.agent.id,
+        agentName: reply.agent.name,
+        agentImageKey: reply.agent.imageKey,
+        content: reply.content,
         status: 'completed',
         turnIndex,
         createdAtMs: nowMs,
@@ -752,15 +1569,20 @@ groupChatRoute.post(
         userId: claims.sub,
         groupChatId: payload.groupChatId,
         senderType: 'agent',
-        agentId: agent.id,
-        content: assistantText,
+        agentId: reply.agent.id,
+        content: reply.content,
         status: 'completed',
         turnIndex,
         metadataJson: JSON.stringify({
           source: 'group_chat_agent',
-          selectedBy: 'v1_rules',
+          selectedBy: 'langgraph_v1',
           model: providerConfig.model,
           wireApi: providerConfig.wireApi,
+          orchestration: {
+            intent: orchestration.intent,
+            selection: orchestration.selection,
+            quality: orchestration.quality,
+          },
         }),
         nowMs,
       })
