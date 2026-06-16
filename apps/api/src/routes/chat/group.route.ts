@@ -82,6 +82,21 @@ type PlannedAgentReply = {
   crossReplyRound?: number
 }
 
+type AgentSpeakingContext = {
+  agentId: string
+  conversationMessageCount: number
+  recentReplyCount: number
+  lastSpokeTurnsAgo: number | null
+  relationshipStage: 'new_connection' | 'warming_up' | 'trusted' | 'close_bond'
+  relationshipScore: number
+  freshnessScore: number
+}
+
+type GroupSpeakingContext = {
+  userEmotion: GroupChatUserEmotion
+  agentContexts: AgentSpeakingContext[]
+}
+
 const GroupChatIntentSchema = z.object({
   intent: z.enum([
     'direct_mention',
@@ -110,6 +125,30 @@ const GroupChatAgentSelectionSchema = z.object({
 })
 
 type GroupChatAgentSelection = z.infer<typeof GroupChatAgentSelectionSchema>
+
+const GroupChatUserEmotionSchema = z.object({
+  primaryEmotion: z.enum([
+    'neutral',
+    'happy',
+    'sad',
+    'anxious',
+    'angry',
+    'lonely',
+    'stressed',
+    'confused',
+    'romantic',
+    'playful',
+    'unknown',
+  ]),
+  intensity: z.number().min(0).max(1),
+  needsComfort: z.boolean(),
+  needsAdvice: z.boolean(),
+  needsDeescalation: z.boolean(),
+  socialEnergy: z.enum(['low', 'medium', 'high']),
+  reason: z.string().trim().max(400),
+})
+
+type GroupChatUserEmotion = z.infer<typeof GroupChatUserEmotionSchema>
 
 const GroupChatReplyQualitySchema = z.object({
   approved: z.boolean(),
@@ -438,7 +477,10 @@ async function fetchUpstreamText(params: {
 
 function selectAgentsForReply(params: {
   agents: AgentGroupChatAgentRecord[]
+  recentMessages: AgentGroupChatMessageRecord[]
   userText: string
+  intent?: GroupChatIntent | null
+  speakingContext?: GroupSpeakingContext | null
 }) {
   const normalized = params.userText.toLowerCase()
   const mentionedAgents = params.agents.filter((agent) => normalized.includes(agent.name.toLowerCase()))
@@ -447,11 +489,230 @@ function selectAgentsForReply(params: {
     return mentionedAgents.slice(0, groupReplyAgentLimit)
   }
 
-  if (/(你们|大家|一起|分别|都说|怎么看|意见)/.test(params.userText)) {
-    return params.agents.slice(0, Math.min(groupReplyAgentLimit, params.agents.length))
+  const shouldUseMultipleAgents = Boolean(
+    params.intent?.shouldUseMultipleAgents ||
+    /(你们|大家|一起|分别|都说|怎么看|意见|讨论|互相|都来|每个人)/.test(params.userText),
+  )
+  const limit = shouldUseMultipleAgents
+    ? Math.min(groupReplyAgentLimit, params.agents.length)
+    : 1
+  const speakingContext = params.speakingContext ?? buildGroupSpeakingContext({
+    agents: params.agents,
+    recentMessages: params.recentMessages,
+    userText: params.userText,
+  })
+  const contextByAgentId = new Map(speakingContext.agentContexts.map((context) => [context.agentId, context]))
+
+  return [...params.agents]
+    .map((agent) => ({
+      agent,
+      score: scoreAgentForFallbackSelection({
+        agent,
+        userText: params.userText,
+        userEmotion: speakingContext.userEmotion,
+        context: contextByAgentId.get(agent.id),
+      }),
+    }))
+    .sort((a, b) => b.score - a.score || a.agent.displayOrder - b.agent.displayOrder)
+    .slice(0, limit)
+    .map((item) => item.agent)
+}
+
+function buildFallbackGroupUserEmotion(userText: string): GroupChatUserEmotion {
+  const text = userText.trim()
+  const lower = text.toLowerCase()
+  const sad = /(难过|伤心|委屈|想哭|失落|崩溃|没人懂|孤独|孤单)/.test(text)
+  const anxious = /(焦虑|紧张|慌|害怕|担心|压力|睡不着|不安)/.test(text)
+  const angry = /(生气|愤怒|烦死|气死|吵架|不爽|火大)/.test(text)
+  const romantic = /(喜欢|想你|暧昧|心动|恋爱|约会|亲密|撒娇)/.test(text)
+  const playful = /(哈哈|笑死|好玩|逗|开玩笑|hh|lol)/i.test(lower)
+  const happy = /(开心|高兴|快乐|惊喜|太好了|舒服了)/.test(text)
+  const confused = /(怎么办|不知道|纠结|迷茫|怎么选|不懂|为什么)/.test(text)
+  const intensity = sad || anxious || angry
+    ? 0.78
+    : romantic || confused
+      ? 0.56
+      : happy || playful
+        ? 0.42
+        : 0.25
+
+  return GroupChatUserEmotionSchema.parse({
+    primaryEmotion: sad
+      ? 'sad'
+      : anxious
+        ? 'anxious'
+        : angry
+          ? 'angry'
+          : romantic
+            ? 'romantic'
+            : playful
+              ? 'playful'
+              : happy
+                ? 'happy'
+                : confused
+                  ? 'confused'
+                  : 'neutral',
+    intensity,
+    needsComfort: sad || anxious || angry || /陪陪|安慰|抱抱|难受/.test(text),
+    needsAdvice: confused || /(建议|分析|复盘|怎么做|帮我想|选择)/.test(text),
+    needsDeescalation: angry || /(冷静|别吵|缓一缓|降温)/.test(text),
+    socialEnergy: sad || anxious ? 'low' : playful || happy ? 'high' : 'medium',
+    reason: '使用本地启发式情绪识别作为 fallback。',
+  })
+}
+
+function getRelationshipStageFromMessageCount(messageCount: number): AgentSpeakingContext['relationshipStage'] {
+  if (messageCount >= 80) {
+    return 'close_bond'
   }
 
-  return params.agents.slice(0, 1)
+  if (messageCount >= 30) {
+    return 'trusted'
+  }
+
+  if (messageCount >= 8) {
+    return 'warming_up'
+  }
+
+  return 'new_connection'
+}
+
+function getRelationshipScore(stage: AgentSpeakingContext['relationshipStage']) {
+  if (stage === 'close_bond') {
+    return 0.95
+  }
+
+  if (stage === 'trusted') {
+    return 0.78
+  }
+
+  if (stage === 'warming_up') {
+    return 0.52
+  }
+
+  return 0.25
+}
+
+function buildGroupSpeakingContext(params: {
+  agents: AgentGroupChatAgentRecord[]
+  recentMessages: AgentGroupChatMessageRecord[]
+  userText: string
+  userEmotion?: GroupChatUserEmotion | null
+}): GroupSpeakingContext {
+  const maxTurnIndex = params.recentMessages.reduce((max, message) => Math.max(max, message.turnIndex), 0) + 1
+  const recentAgentMessages = params.recentMessages
+    .filter((message) => message.senderType === 'agent' && message.agentId)
+    .slice(-18)
+  const agentContexts = params.agents.map((agent) => {
+    const messagesByAgent = recentAgentMessages.filter((message) => message.agentId === agent.id)
+    const lastMessage = messagesByAgent.at(-1)
+    const lastSpokeTurnsAgo = lastMessage ? Math.max(0, maxTurnIndex - lastMessage.turnIndex) : null
+    const relationshipStage = getRelationshipStageFromMessageCount(agent.conversationMessageCount)
+    const relationshipScore = getRelationshipScore(relationshipStage)
+    const freshnessBase = lastSpokeTurnsAgo === null ? 1 : Math.min(1, lastSpokeTurnsAgo / 6)
+    const freshnessPenalty = Math.min(0.75, messagesByAgent.length * 0.16)
+    const freshnessScore = Math.max(0, Number((freshnessBase - freshnessPenalty).toFixed(2)))
+
+    return {
+      agentId: agent.id,
+      conversationMessageCount: agent.conversationMessageCount,
+      recentReplyCount: messagesByAgent.length,
+      lastSpokeTurnsAgo,
+      relationshipStage,
+      relationshipScore,
+      freshnessScore,
+    }
+  })
+
+  return {
+    userEmotion: params.userEmotion ?? buildFallbackGroupUserEmotion(params.userText),
+    agentContexts,
+  }
+}
+
+function getAgentSpeakingContext(context: GroupSpeakingContext, agentId: string) {
+  return context.agentContexts.find((item) => item.agentId === agentId) ?? null
+}
+
+function formatSpeakingContextForPrompt(params: {
+  agents: AgentGroupChatAgentRecord[]
+  speakingContext: GroupSpeakingContext
+}) {
+  const emotion = params.speakingContext.userEmotion
+  const agentLines = params.agents.map((agent) => {
+    const context = getAgentSpeakingContext(params.speakingContext, agent.id)
+
+    return [
+      `${agent.name}(${agent.id})`,
+      `关系阶段：${context?.relationshipStage ?? 'new_connection'}`,
+      `一对一消息数：${context?.conversationMessageCount ?? 0}`,
+      `近期发言次数：${context?.recentReplyCount ?? 0}`,
+      `距离上次发言轮数：${context?.lastSpokeTurnsAgo ?? '近期未发言'}`,
+      `新鲜度：${context?.freshnessScore ?? 1}`,
+    ].join('；')
+  })
+
+  return [
+    '用户情绪：',
+    `主情绪：${emotion.primaryEmotion}`,
+    `强度：${emotion.intensity.toFixed(2)}`,
+    `需要安慰：${emotion.needsComfort ? '是' : '否'}`,
+    `需要建议：${emotion.needsAdvice ? '是' : '否'}`,
+    `需要降温：${emotion.needsDeescalation ? '是' : '否'}`,
+    `社交能量：${emotion.socialEnergy}`,
+    `判断原因：${emotion.reason}`,
+    'Agent 发言权信号：',
+    ...agentLines,
+  ].join('\n')
+}
+
+function scoreAgentForFallbackSelection(params: {
+  agent: AgentGroupChatAgentRecord
+  userText: string
+  userEmotion: GroupChatUserEmotion
+  context?: AgentSpeakingContext | null
+}) {
+  const profileText = [
+    params.agent.name,
+    params.agent.headline,
+    params.agent.description,
+    params.agent.personalityPrompt,
+    params.agent.tonePrompt,
+    params.agent.defaultPrompt,
+  ].filter(Boolean).join('\n')
+  let score = 1
+
+  if (params.context) {
+    score += params.context.relationshipScore * 1.6
+    score += params.context.freshnessScore * 1.8
+    score -= params.context.recentReplyCount * 0.45
+
+    if (params.context.lastSpokeTurnsAgo === 0) {
+      score -= 0.9
+    }
+  }
+
+  if (params.userEmotion.needsComfort && /(温柔|陪伴|情绪|安慰|稳定|倾听|治愈|共情)/.test(profileText)) {
+    score += 2.4
+  }
+
+  if (params.userEmotion.needsAdvice && /(理性|分析|建议|计划|复盘|清醒|判断|策略)/.test(profileText)) {
+    score += 2.1
+  }
+
+  if (params.userEmotion.needsDeescalation && /(克制|边界|冷静|稳定|成熟|安全)/.test(profileText)) {
+    score += 2.2
+  }
+
+  if ((params.userEmotion.primaryEmotion === 'romantic' || /暧昧|心动|恋爱|想你|喜欢/.test(params.userText)) && /(暧昧|恋爱|甜|撒娇|心动|亲密)/.test(profileText)) {
+    score += 1.8
+  }
+
+  if ((params.userEmotion.primaryEmotion === 'playful' || params.userEmotion.socialEnergy === 'high') && /(活泼|幽默|开朗|轻松|俏皮|有趣)/.test(profileText)) {
+    score += 1.4
+  }
+
+  return score
 }
 
 function formatAgentRoster(agents: AgentGroupChatAgentRecord[]) {
@@ -515,8 +776,10 @@ function buildFallbackGroupChatIntent(params: {
 function normalizeAgentSelection(params: {
   selection: GroupChatAgentSelection
   agents: AgentGroupChatAgentRecord[]
+  recentMessages: AgentGroupChatMessageRecord[]
   intent: GroupChatIntent
   userText: string
+  speakingContext: GroupSpeakingContext
 }): GroupChatAgentSelection {
   const agentById = new Map(params.agents.map((agent) => [agent.id, agent]))
   const selectedAgentIds = dedupeStrings(params.selection.selectedAgentIds)
@@ -535,7 +798,10 @@ function normalizeAgentSelection(params: {
 
   const fallbackAgents = selectAgentsForReply({
     agents: params.agents,
+    recentMessages: params.recentMessages,
     userText: params.userText,
+    intent: params.intent,
+    speakingContext: params.speakingContext,
   })
 
   return GroupChatAgentSelectionSchema.parse({
@@ -631,9 +897,16 @@ const groupChatAgentSelectionPrompt = ChatPromptTemplate.fromMessages([
     'system',
     [
       '你是 AI 电子伴侣群聊的发言权调度器。',
-      '请根据意图判断、Agent 人设和最近聊天，选择最适合回复的 Agent。',
+      '请根据意图判断、用户情绪、Agent 人设、关系阶段和最近发言频率，选择最适合回复的 Agent。',
       `最多选择 ${groupReplyAgentLimit} 个 Agent。`,
-      '不要为了热闹而选择过多 Agent。只有用户明确询问大家意见、要求分别回答或需要多视角时，才选择多个。',
+      '不要为了热闹而选择过多 Agent。只有用户明确询问大家意见、要求分别回答、需要多视角或高情绪强度需要接力陪伴时，才选择多个。',
+      '选择原则：',
+      '- 情绪低落、孤独、焦虑时，优先选择性格稳定、温柔、善于共情且关系更熟的 Agent。',
+      '- 用户需要分析、计划、建议时，优先选择理性、清晰、擅长复盘的 Agent。',
+      '- 用户情绪激烈或冲突升级时，优先选择边界感强、克制、能降温的 Agent。',
+      '- 用户轻松玩笑或高社交能量时，可以选择更活泼、有趣的 Agent。',
+      '- 最近发言太频繁的 Agent 要适当降权，避免一个 Agent 连续抢话。',
+      '- 长期关系更深的 Agent 可以优先承接高情绪强度内容，但不能无视人设匹配。',
       '输出 selectedAgentIds 时必须使用给定 Agent 的 id。',
     ].join('\n'),
   ],
@@ -643,8 +916,31 @@ const groupChatAgentSelectionPrompt = ChatPromptTemplate.fromMessages([
       '群聊名称：{groupTitle}',
       '群聊摘要：{groupSummary}',
       '意图判断：{intent}',
+      '发言权上下文：',
+      '{speakingContext}',
       '可参与 Agent：',
       '{agentRoster}',
+      '最近群聊：',
+      '{recentHistory}',
+      '用户本轮消息：{userText}',
+    ].join('\n'),
+  ],
+])
+
+const groupChatUserEmotionPrompt = ChatPromptTemplate.fromMessages([
+  [
+    'system',
+    [
+      '你是 AI 电子伴侣群聊的用户情绪识别器。',
+      '只判断用户本轮消息体现出的主要情绪、强度和陪伴需求，不要生成聊天回复。',
+      '需要区分用户是需要安慰、建议、降温，还是只是轻松闲聊。',
+    ].join('\n'),
+  ],
+  [
+    'user',
+    [
+      '群聊名称：{groupTitle}',
+      '群聊摘要：{groupSummary}',
       '最近群聊：',
       '{recentHistory}',
       '用户本轮消息：{userText}',
@@ -962,6 +1258,59 @@ async function classifyGroupChatIntentWithLangGraph(params: {
   })
 }
 
+async function invokeStructuredGroupUserEmotion(params: {
+  providerConfig: ChatProviderConfig
+  method: LangChainStructuredOutputMethod
+  groupChat: AgentGroupChatRecord
+  recentMessages: AgentGroupChatMessageRecord[]
+  userText: string
+  signal: AbortSignal
+}) {
+  const model = buildLangChainChatModel(params.providerConfig)
+  const structuredModel = model.withStructuredOutput(GroupChatUserEmotionSchema, {
+    name: 'agent_group_chat_user_emotion',
+    method: params.method,
+  })
+  const chain = groupChatUserEmotionPrompt.pipe(structuredModel)
+  const result = await chain.invoke({
+    groupTitle: params.groupChat.title,
+    groupSummary: params.groupChat.summary || '暂无',
+    recentHistory: formatGroupHistory(params.recentMessages) || '暂无历史。',
+    userText: params.userText,
+  }, { signal: params.signal })
+  const emotion = GroupChatUserEmotionSchema.parse(result)
+
+  return GroupChatUserEmotionSchema.parse({
+    ...emotion,
+    intensity: Math.min(1, Math.max(0, emotion.intensity)),
+    reason: emotion.reason.trim() || '根据用户本轮消息进行情绪识别。',
+  })
+}
+
+async function detectGroupUserEmotionWithLangGraph(params: {
+  providerConfig: ChatProviderConfig
+  groupChat: AgentGroupChatRecord
+  recentMessages: AgentGroupChatMessageRecord[]
+  userText: string
+  signal: AbortSignal
+}) {
+  let lastError: unknown = null
+
+  for (const method of getStructuredOutputMethods(params.providerConfig)) {
+    try {
+      return await invokeStructuredGroupUserEmotion({
+        ...params,
+        method,
+      })
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  console.warn('LangGraph group chat user emotion detection failed', lastError)
+  return buildFallbackGroupUserEmotion(params.userText)
+}
+
 async function invokeStructuredAgentSelection(params: {
   providerConfig: ChatProviderConfig
   method: LangChainStructuredOutputMethod
@@ -970,6 +1319,7 @@ async function invokeStructuredAgentSelection(params: {
   recentMessages: AgentGroupChatMessageRecord[]
   userText: string
   intent: GroupChatIntent
+  speakingContext: GroupSpeakingContext
   signal: AbortSignal
 }) {
   const model = buildLangChainChatModel(params.providerConfig)
@@ -982,6 +1332,10 @@ async function invokeStructuredAgentSelection(params: {
     groupTitle: params.groupChat.title,
     groupSummary: params.groupChat.summary || '暂无',
     intent: JSON.stringify(params.intent),
+    speakingContext: formatSpeakingContextForPrompt({
+      agents: params.agents,
+      speakingContext: params.speakingContext,
+    }),
     agentRoster: formatAgentRoster(params.agents),
     recentHistory: formatGroupHistory(params.recentMessages) || '暂无历史。',
     userText: params.userText,
@@ -990,8 +1344,10 @@ async function invokeStructuredAgentSelection(params: {
   return normalizeAgentSelection({
     selection: GroupChatAgentSelectionSchema.parse(result),
     agents: params.agents,
+    recentMessages: params.recentMessages,
     intent: params.intent,
     userText: params.userText,
+    speakingContext: params.speakingContext,
   })
 }
 
@@ -1002,6 +1358,7 @@ async function selectGroupChatAgentsWithLangGraph(params: {
   recentMessages: AgentGroupChatMessageRecord[]
   userText: string
   intent: GroupChatIntent
+  speakingContext: GroupSpeakingContext
   signal: AbortSignal
 }) {
   let lastError: unknown = null
@@ -1022,14 +1379,19 @@ async function selectGroupChatAgentsWithLangGraph(params: {
     selection: {
       selectedAgentIds: selectAgentsForReply({
         agents: params.agents,
+        recentMessages: params.recentMessages,
         userText: params.userText,
+        intent: params.intent,
+        speakingContext: params.speakingContext,
       }).map((agent) => agent.id),
       mode: params.intent.shouldUseMultipleAgents ? 'multi_serial' : 'single',
       reason: 'LangGraph Agent 选择失败，已使用本地规则回退。',
     },
     agents: params.agents,
+    recentMessages: params.recentMessages,
     intent: params.intent,
     userText: params.userText,
+    speakingContext: params.speakingContext,
   })
 }
 
@@ -1192,6 +1554,7 @@ const GroupChatOrchestrationState = Annotation.Root({
   userText: Annotation<string>(),
   agentMemoriesByAgentId: Annotation<Record<string, AgentMemoryForPrompt[]>>(),
   intent: Annotation<GroupChatIntent | null>(),
+  speakingContext: Annotation<GroupSpeakingContext | null>(),
   selection: Annotation<GroupChatAgentSelection | null>(),
   selectedAgents: Annotation<AgentGroupChatAgentRecord[]>(),
   replies: Annotation<PlannedAgentReply[]>(),
@@ -1214,11 +1577,35 @@ async function classifyGroupIntentNode(state: typeof GroupChatOrchestrationState
   }
 }
 
+async function detectGroupEmotionNode(state: typeof GroupChatOrchestrationState.State) {
+  const userEmotion = await detectGroupUserEmotionWithLangGraph({
+    providerConfig: state.providerConfig,
+    groupChat: state.groupChat,
+    recentMessages: state.recentMessages,
+    userText: state.userText,
+    signal: state.signal,
+  })
+
+  return {
+    speakingContext: buildGroupSpeakingContext({
+      agents: state.agents,
+      recentMessages: state.recentMessages,
+      userText: state.userText,
+      userEmotion,
+    }),
+  }
+}
+
 async function selectGroupAgentsNode(state: typeof GroupChatOrchestrationState.State) {
   const intent = state.intent ?? buildFallbackGroupChatIntent({
     agents: state.agents,
     userText: state.userText,
     reason: '意图节点未返回结果，已使用本地规则回退。',
+  })
+  const speakingContext = state.speakingContext ?? buildGroupSpeakingContext({
+    agents: state.agents,
+    recentMessages: state.recentMessages,
+    userText: state.userText,
   })
   const selection = await selectGroupChatAgentsWithLangGraph({
     providerConfig: state.providerConfig,
@@ -1227,6 +1614,7 @@ async function selectGroupAgentsNode(state: typeof GroupChatOrchestrationState.S
     recentMessages: state.recentMessages,
     userText: state.userText,
     intent,
+    speakingContext,
     signal: state.signal,
   })
   const agentById = new Map(state.agents.map((agent) => [agent.id, agent]))
@@ -1237,11 +1625,15 @@ async function selectGroupAgentsNode(state: typeof GroupChatOrchestrationState.S
     ? selectedAgents
     : selectAgentsForReply({
         agents: state.agents,
+        recentMessages: state.recentMessages,
         userText: state.userText,
+        intent,
+        speakingContext,
       })
 
   return {
     intent,
+    speakingContext,
     selection: selectedAgents.length > 0
       ? selection
       : normalizeAgentSelection({
@@ -1251,8 +1643,10 @@ async function selectGroupAgentsNode(state: typeof GroupChatOrchestrationState.S
             reason: 'LangGraph 选择结果为空，已使用本地规则兜底。',
           },
           agents: state.agents,
+          recentMessages: state.recentMessages,
           intent,
           userText: state.userText,
+          speakingContext,
         }),
     selectedAgents: fallbackAgents,
   }
@@ -1271,8 +1665,14 @@ async function generateGroupRepliesNode(state: typeof GroupChatOrchestrationStat
       reason: '选择节点未返回结果，使用当前已选 Agent。',
     },
     agents: state.agents,
+    recentMessages: state.recentMessages,
     intent,
     userText: state.userText,
+    speakingContext: state.speakingContext ?? buildGroupSpeakingContext({
+      agents: state.agents,
+      recentMessages: state.recentMessages,
+      userText: state.userText,
+    }),
   })
   const replies: PlannedAgentReply[] = []
 
@@ -1363,8 +1763,14 @@ async function generateCrossAgentRepliesNode(state: typeof GroupChatOrchestratio
       reason: '选择节点未返回结果，Agent 间回应使用首轮回复列表。',
     },
     agents: state.agents,
+    recentMessages: state.recentMessages,
     intent,
     userText: state.userText,
+    speakingContext: state.speakingContext ?? buildGroupSpeakingContext({
+      agents: state.agents,
+      recentMessages: state.recentMessages,
+      userText: state.userText,
+    }),
   })
   const crossReplyPlan = await planCrossAgentRepliesWithLangGraph({
     providerConfig: state.providerConfig,
@@ -1480,8 +1886,14 @@ async function checkGroupReplyQualityNode(state: typeof GroupChatOrchestrationSt
       reason: '选择节点未返回结果，质量检查使用当前回复列表。',
     },
     agents: state.agents,
+    recentMessages: state.recentMessages,
     intent,
     userText: state.userText,
+    speakingContext: state.speakingContext ?? buildGroupSpeakingContext({
+      agents: state.agents,
+      recentMessages: state.recentMessages,
+      userText: state.userText,
+    }),
   })
   const quality = await checkGroupChatReplyQualityWithLangGraph({
     providerConfig: state.providerConfig,
@@ -1516,12 +1928,14 @@ async function checkGroupReplyQualityNode(state: typeof GroupChatOrchestrationSt
 
 const groupChatOrchestrationGraph = new StateGraph(GroupChatOrchestrationState)
   .addNode('classifyIntent', classifyGroupIntentNode)
+  .addNode('detectEmotion', detectGroupEmotionNode)
   .addNode('selectAgents', selectGroupAgentsNode)
   .addNode('generateReplies', generateGroupRepliesNode)
   .addNode('generateCrossReplies', generateCrossAgentRepliesNode)
   .addNode('checkQuality', checkGroupReplyQualityNode)
   .addEdge(START, 'classifyIntent')
-  .addEdge('classifyIntent', 'selectAgents')
+  .addEdge('classifyIntent', 'detectEmotion')
+  .addEdge('detectEmotion', 'selectAgents')
   .addEdge('selectAgents', 'generateReplies')
   .addEdge('generateReplies', 'generateCrossReplies')
   .addEdge('generateCrossReplies', 'checkQuality')
@@ -1548,6 +1962,7 @@ async function orchestrateGroupChatReplies(params: {
       userText: params.userText,
       agentMemoriesByAgentId: params.agentMemoriesByAgentId,
       intent: null,
+      speakingContext: null,
       selection: null,
       selectedAgents: [],
       replies: [],
@@ -1569,13 +1984,20 @@ async function orchestrateGroupChatReplies(params: {
         reason: 'LangGraph 未返回选择结果，使用回复结果反推。',
       },
       agents: params.agents,
+      recentMessages: params.recentMessages,
       intent,
       userText: params.userText,
+      speakingContext: result.speakingContext ?? buildGroupSpeakingContext({
+        agents: params.agents,
+        recentMessages: params.recentMessages,
+        userText: params.userText,
+      }),
     })
 
     return {
       intent,
       selection,
+      speakingContext: result.speakingContext,
       replies: result.replies,
       primaryReplies: result.primaryReplies,
       crossReplyPlan: result.crossReplyPlan,
@@ -1588,9 +2010,17 @@ async function orchestrateGroupChatReplies(params: {
       userText: params.userText,
       reason: 'LangGraph 编排失败，已回退到 v1 规则。',
     })
+    const speakingContext = buildGroupSpeakingContext({
+      agents: params.agents,
+      recentMessages: params.recentMessages,
+      userText: params.userText,
+    })
     const selectedAgents = selectAgentsForReply({
       agents: params.agents,
+      recentMessages: params.recentMessages,
       userText: params.userText,
+      intent,
+      speakingContext,
     })
     const selection = normalizeAgentSelection({
       selection: {
@@ -1599,8 +2029,10 @@ async function orchestrateGroupChatReplies(params: {
         reason: 'LangGraph 编排失败，已回退到 v1 规则。',
       },
       agents: params.agents,
+      recentMessages: params.recentMessages,
       intent,
       userText: params.userText,
+      speakingContext,
     })
     const replies: PlannedAgentReply[] = []
 
@@ -1638,6 +2070,7 @@ async function orchestrateGroupChatReplies(params: {
     return {
       intent,
       selection,
+      speakingContext,
       replies,
       primaryReplies: replies,
       crossReplyPlan: GroupChatCrossReplyPlanSchema.parse({
@@ -1998,6 +2431,7 @@ groupChatRoute.post(
           orchestration: {
             intent: orchestration.intent,
             selection: orchestration.selection,
+            speakingContext: orchestration.speakingContext,
             crossReplyPlan: orchestration.crossReplyPlan,
             quality: orchestration.quality,
           },

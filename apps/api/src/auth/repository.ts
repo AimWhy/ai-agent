@@ -400,6 +400,8 @@ export type AgentGroupChatAgentRecord = {
   defaultPrompt: string | null
   imageKey: string | null
   displayOrder: number
+  conversationMessageCount: number
+  conversationLastMessageAtMs: number | null
 }
 
 async function listAgentGroupChatMembersForGroups(
@@ -606,8 +608,17 @@ export async function listOwnedAgentCompanionsByIds(
       guardrailsPrompt: userAgentCompanions.guardrailsPrompt,
       defaultPrompt: userAgentCompanions.defaultPrompt,
       imageKey: userAgentCompanions.imageKey,
+      conversationMessageCount: sql<number>`coalesce(${agentConversations.messageCount}, 0)`,
+      conversationLastMessageAtMs: agentConversations.lastMessageAtMs,
     })
     .from(userAgentCompanions)
+    .leftJoin(
+      agentConversations,
+      and(
+        eq(agentConversations.userId, userAgentCompanions.userId),
+        eq(agentConversations.agentId, userAgentCompanions.id),
+      ),
+    )
     .where(and(
       eq(userAgentCompanions.userId, params.userId),
       inArray(userAgentCompanions.id, params.agentIds),
@@ -620,6 +631,8 @@ export async function listOwnedAgentCompanionsByIds(
     .map((row) => ({
       ...row,
       displayOrder: orderByAgentId.get(row.id) ?? 0,
+      conversationMessageCount: row.conversationMessageCount ?? 0,
+      conversationLastMessageAtMs: row.conversationLastMessageAtMs,
     }))
     .sort((a, b) => a.displayOrder - b.displayOrder)
 }
@@ -754,9 +767,18 @@ export async function listAgentGroupChatAgents(params: {
       defaultPrompt: userAgentCompanions.defaultPrompt,
       imageKey: userAgentCompanions.imageKey,
       displayOrder: agentGroupChatMembers.displayOrder,
+      conversationMessageCount: sql<number>`coalesce(${agentConversations.messageCount}, 0)`,
+      conversationLastMessageAtMs: agentConversations.lastMessageAtMs,
     })
     .from(agentGroupChatMembers)
     .innerJoin(userAgentCompanions, eq(userAgentCompanions.id, agentGroupChatMembers.agentId))
+    .leftJoin(
+      agentConversations,
+      and(
+        eq(agentConversations.userId, agentGroupChatMembers.userId),
+        eq(agentConversations.agentId, agentGroupChatMembers.agentId),
+      ),
+    )
     .where(and(
       eq(agentGroupChatMembers.userId, params.userId),
       eq(agentGroupChatMembers.groupChatId, params.groupChatId),
