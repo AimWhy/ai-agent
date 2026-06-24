@@ -188,6 +188,18 @@ export type {
   ApiSuccess,
 } from './common/response'
 export {
+  ImageGenerationProviderApiSchema,
+  ImageGenerationProxyConfigSchema,
+  ImageGenerationProxyRequestSchema,
+  ImageGenerationProxyResponseSchema,
+} from './image-generation/proxy.contract'
+export type {
+  ImageGenerationProviderApi,
+  ImageGenerationProxyConfig,
+  ImageGenerationProxyRequest,
+  ImageGenerationProxyResponse,
+} from './image-generation/proxy.contract'
+export {
   HealthResponseSchema,
 } from './system/health.contract'
 export type {

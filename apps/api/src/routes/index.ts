@@ -7,6 +7,7 @@ import catalogRoute from './catalog/list.route'
 import groupChatRoute from './chat/group.route'
 import inboxChatRoute from './chat/inbox.route'
 import financialBillRoute from './financial/bill.route'
+import imageGenerationProxyRoute from './image-generation/proxy.route'
 import orderRoute from './order/detail.route'
 import roleRoute from './role/management.route'
 import subscriptionPlanRoute from './subscription/plan.route'
@@ -27,6 +28,7 @@ const appRoutes = routes
   .route('/rpc/chat/group', groupChatRoute)
   .route('/rpc/chat/inbox', inboxChatRoute)
   .route('/rpc/financial/bill', financialBillRoute)
+  .route('/rpc/image-generation', imageGenerationProxyRoute)
   .route('/rpc/user', userRoute)
   .route('/rpc/role', roleRoute)
   .route('/rpc/subscription/plan', subscriptionPlanRoute)
