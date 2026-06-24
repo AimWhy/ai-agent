@@ -128,18 +128,31 @@ async function request<T>(config: AxiosRequestConfig): Promise<T> {
     if (appError.shouldRefresh) {
       try {
         await ensureClientRefresh()
-        const retryHeaders = { ...((config.headers ?? {}) as RawAxiosRequestHeaders) }
-        delete retryHeaders.authorization
-        delete retryHeaders.Authorization
-        const retryConfig = createRequestConfig(config.url ?? '', {
-          ...config,
-          headers: retryHeaders,
-        })
-        const retryResponse = await axios.request<ApiResponse<T>>(retryConfig)
-        return unwrapApiResponse(retryConfig, retryResponse.data)
       } catch {
         clearClientSession()
         throw new Error('Session refresh failed')
+      }
+
+      const retryHeaders = { ...((config.headers ?? {}) as RawAxiosRequestHeaders) }
+      delete retryHeaders.authorization
+      delete retryHeaders.Authorization
+      const retryConfig = createRequestConfig(config.url ?? '', {
+        ...config,
+        headers: retryHeaders,
+      })
+      const retryResponse = await axios.request<ApiResponse<T>>(retryConfig)
+
+      try {
+        return unwrapApiResponse(retryConfig, retryResponse.data)
+      } catch (retryError) {
+        const retryAppError = retryError as Error & { shouldRefresh?: boolean }
+
+        if (retryAppError.shouldRefresh) {
+          clearClientSession()
+          throw new Error('Session refresh failed')
+        }
+
+        throw retryError
       }
     }
 

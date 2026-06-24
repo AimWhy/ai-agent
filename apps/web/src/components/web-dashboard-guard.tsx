@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { UserProfileResponse, WebAuthSession } from '@repo/contracts'
+import type { BizCodeValue, UserProfileResponse, WebAuthSession } from '@repo/contracts'
 import { clearClientSession, readClientSession, sessionChangedEventName } from '@/auth/client-session'
 import { getWebUserProfile } from '@/auth/api'
 
@@ -13,6 +13,24 @@ type WebDashboardContextValue = {
 }
 
 const WebDashboardContext = createContext<WebDashboardContextValue | null>(null)
+
+const authFailureCodes: Set<BizCodeValue | 'SESSION_REFRESH_FAILED'> = new Set([
+  'AUTH.UNAUTHORIZED',
+  'AUTH.REFRESH_TOKEN_INVALID',
+  'AUTH.REFRESH_TOKEN_REPLAYED',
+  'AUTH.SESSION_REVOKED',
+  'SESSION_REFRESH_FAILED',
+])
+
+function isAuthFailure(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false
+  }
+
+  const appError = error as Error & { code?: BizCodeValue }
+
+  return appError.message === 'Session refresh failed' || Boolean(appError.code && authFailureCodes.has(appError.code))
+}
 
 type WebDashboardGuardProps = {
   children: React.ReactNode
@@ -43,9 +61,11 @@ export function WebDashboardGuard({ children }: WebDashboardGuardProps) {
       }
 
       setContext({ profile: nextProfile, session: latestSession.session, refreshProfile: loadProfile })
-    } catch {
-      clearClientSession()
-      router.replace('/login')
+    } catch (error) {
+      if (isAuthFailure(error)) {
+        clearClientSession()
+        router.replace('/login')
+      }
     } finally {
       setIsLoading(false)
     }
